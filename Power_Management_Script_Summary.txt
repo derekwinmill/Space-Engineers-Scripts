@@ -1,0 +1,48 @@
+### Power Management Scripting Summary
+
+#### General Design
+1. **Autonomous Power Optimization**:
+   - Automatically prioritize power systems during different phases of operation (e.g., normal, defensive).
+
+2. **Integration with Master Script**:
+   - Receives alerts from the Master Script (e.g., "Under Attack") to adjust power priorities.
+   - Sends updates to the Master Script about current power status (e.g., critical issues).
+
+#### Key Features
+1. **Power System Monitoring**:
+   - Tracks status of batteries, reactors, solar panels, and hydrogen engines.
+   - Monitors grid-wide power capacity and consumption.
+
+2. **Defensive Prioritization**:
+   - During an attack:
+     - Redirects power to turrets, drones, welders, and defensive systems.
+     - Reduces power allocation to non-critical systems (e.g., production facilities, interior lighting).
+   - Post-combat:
+     - Restores balanced power distribution.
+
+3. **LCD Feedback**:
+   - **War Room Power LCD**:
+     - Displays energy reserves, current demand, and priority systems.
+     - Example:
+       ```
+       Power Status:
+       - Batteries: 85% Charged
+       - Reactors: 2 Online
+       - Solar: 40 MW
+       - Power Distribution: Defense Priority
+       ```
+
+#### Alert Handling & Communication
+- **From Master Script**:
+  - Alert: "Under Attack" triggers defensive mode.
+  - Alert: "Attack Over" restores normal mode.
+- **To Master Script**:
+  - Sends alert if grid-wide power is below a critical threshold.
+
+#### Failsafes
+1. **Emergency Overrides**:
+   - Activates backup batteries or hydrogen engines if primary power sources fail.
+   - Sends alerts if the base's core systems lose power.
+
+2. **Event Logging**:
+   - Logs all power switches, alerts, and critical issues to a debug LCD for troubleshooting.
