@@ -1,0 +1,67 @@
+### Drone Scripting Summary
+
+#### General Design
+1. **Autonomous and Manual Control**:
+   - Primary focus on autonomous operation by default.
+   - Allows manual overrides via control seat toolbars or button panels.
+
+2. **Integration with Master Script**:
+   - Receives commands like "deploy", "engage", or "recall" from the Master Script.
+   - Reports status updates (e.g., "Active", "Damaged", or "Destroyed") back to Master Script.
+
+#### Key Features
+1. **Roles and Behaviors**:
+   - Drones designed with specific roles:
+     - **Patrol Drones**: Follow predefined waypoints to scout for threats.
+     - **Engagement Drones**: Actively seek and attack targets.
+     - **Support Drones**: Respond to nearby drones or base systems for backup and repairs.
+
+2. **Global and Targeted Commands**:
+   - **Button Panels**:
+     - Used for issuing global commands (e.g., "Deploy All Drones", "Recall All").
+   - **Control Seat Toolbars**:
+     - Used for precision commands to specific drones (e.g., "Drone 01 - Patrol Zone A").
+
+3. **Event Reporting**:
+   - Drones send updates to the Master Script in real-time:
+     - Entering/Exiting Patrol Zones.
+     - Detecting threats.
+     - Receiving damage or being destroyed.
+
+#### Command Handling
+1. **Button Panel Commands**:
+   - Example Commands:
+     - `deploy_all`: Deploys all drones for active operations.
+     - `recall_all`: Recalls all drones to the base.
+     - `engage_all`: Activates all drones to engage threats.
+
+2. **Toolbar Commands (Control Seat)**:
+   - Targeted Commands for Specific Drones:
+     - `patrol_drone_01`: Drone 01 starts its patrol.
+     - `engage_drone_02`: Drone 02 engages a target.
+     - `recall_drone_03`: Drone 03 returns to the base.
+
+#### LCD Feedback
+1. **War Room Displays**:
+   - **Drone Status LCD**:
+     - Tracks individual drone statuses (e.g., "Patrolling", "Engaging", "Damaged").
+     - Example:
+       ```
+       Drone Status:
+       - Drone 01: Patrolling
+       - Drone 02: Engaging
+       - Drone 03: Returning to Base
+       ```
+   - **Event Log LCD**:
+     - Displays recent events and actions (e.g., "Drone 02 Engaged Enemy at 2.4km").
+
+#### Failsafes
+1. **Autonomy Reset**:
+   - After manual commands, drones revert to autonomous operation when idle.
+
+2. **Event Logging**:
+   - Logs manual commands and drone actions for debugging and troubleshooting.
+
+3. **Damage and Repair Handling**:
+   - Damaged drones automatically return to the base for repairs.
+   - If destroyed, the drone is flagged as "Destroyed" in the status LCD.
