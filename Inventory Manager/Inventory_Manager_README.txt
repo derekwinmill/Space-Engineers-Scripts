@@ -3,7 +3,7 @@ MARS COLONY INVENTORY MANAGER - README
 
 This README explains the intended setup, block naming, LCD interaction, button commands, and major functions for the Mars Colony Inventory Manager programmable block script.
 
-This script is designed as a focused inventory/logistics script. It is not intended to control mining drills, autopilots, defenses, doors, or power systems. Those should remain in separate scripts or event-controller/timer-block systems.
+This script is designed as a focused inventory/logistics script. It is not intended to control mining drills, autopilots, defenses, doors, or power systems. Those should remain in separate scripts for modularity.
 
 
 START SAFELY
@@ -136,6 +136,34 @@ The script will:
 8. When the trade ship launches, clear/reset the contract LCD only if contracts were fulfilled and ready.
 
 
+### NEW FEATURE: PRIORITIZE AMMO 
+===============================
+This script now supports prioritization of specific ammo types for defensive readiness. 
+
+**Setup:**
+Use the `[PriorityAmmo]` tag for any inventory blocks that should receive priority ammo supplies. The script will maintain target levels of specified ammo by transferring items to tagged blocks.
+
+**Target Ammo Levels:**
+You can define desired amounts in the script under the `PRIORITIZED_AMMO` dictionary. For example:
+```csharp
+Dictionary<string, double> PRIORITIZED_AMMO = new Dictionary<string, double>()
+{
+    { "5.56x45mm NATO magazine", 500 },
+    { "Missile 200mm", 50 },
+    { "Autocannon Magazine", 200 },
+};
+```
+
+**Priority Workflow:**
+1. All ammo inventories will continuously scan for shortfalls relative to PRIORITIZED_AMMO levels.
+2. Items will be moved from general inventory to `[PriorityAmmo]` blocks as needed.
+3. Dry run mode will report priority ammo actions without physically moving items.
+
+**Usage Tip:**
+Place `[PriorityAmmo]` tags on block inventories near drone hangars or weapon areas for efficient resupply.
+
+---
+
 TRADE DOCK SETUP
 ================
 
@@ -178,202 +206,3 @@ Hydrogen Bottle = 10
 Oxygen Bottle = 4
 
 The script treats loadout cargo as assigned inventory. It should not count those items as available for contracts or normal production calculations.
-
-
-SALVAGE DOCK SETUP
-==================
-
-Recommended connector:
-
-SAL - Connector - Salvage Dock [SalvageDock]
-
-When a salvage rover/ship connects, the script unloads allowed items into base storage and can drain connected salvage hydrogen/oxygen tanks by using stockpile behavior.
-
-Use [NoUnload] or [DoNotTrack] on salvage cargo that should not be unloaded.
-Use [NoDrain] on gas tanks that should not be drained.
-
-
-REFINERY ASSIGNMENT
-===================
-
-Dedicated refineries can be assigned to ore types with tags:
-
-MIN - Refinery - Iron [Refine:Iron]
-MIN - Refinery - Nickel [Refine:Nickel]
-MIN - Refinery - Cobalt [Refine:Cobalt]
-MIN - Refinery - Silicon [Refine:Silicon]
-MIN - Refinery - Magnesium [Refine:Magnesium]
-MIN - Refinery - Silver [Refine:Silver]
-MIN - Refinery - Gold [Refine:Gold]
-MIN - Refinery - Platinum [Refine:Platinum]
-MIN - Refinery - Uranium [Refine:Uranium]
-
-The script attempts to load matching ore into the matching refinery.
-
-If ore drops below its configured threshold, the script can:
-
-- Show a low-ore alert
-- Update the refinery status LCD
-- Turn on ore-specific light groups
-- Trigger relay blocks if available
-
-Recommended ore status light groups:
-
-IronOreStatusLights
-NickelOreStatusLights
-CobaltOreStatusLights
-SiliconOreStatusLights
-MagnesiumOreStatusLights
-
-Recommended relay tags:
-
-[Relay:Iron]
-[Relay:Nickel]
-[Relay:Cobalt]
-[Relay:Silicon]
-[Relay:Magnesium]
-
-
-STATUS LIGHTS
-=============
-
-Create a block group named:
-
-InventoryStatusLights
-
-Put both the inventory room light and main hall inventory indicator light into this group.
-
-The script writes a legend to [InventoryLegend].
-
-Default colors:
-
-Green  = Ready / healthy
-Yellow = Producing / sorting
-Blue   = Docked / loading
-Red    = Blocked / missing materials
-Purple = Contracts or loadout paused
-White  = Idle / waiting
-Off    = Script stopped or no light group
-
-
-BROADCAST BLOCK
-===============
-
-Optional broadcast blocks should include:
-
-[InventoryBroadcast]
-
-This can be used on an antenna, beacon, or LCD/text panel. The script attempts to write the alert/ready text to the block.
-
-
-BUTTON COMMANDS
-===============
-
-Buttons should run the programmable block with one of these arguments:
-
-force sort
-pause contracts
-resume contracts
-pause loadout
-resume loadout
-reset contracts
-clear alerts
-status
-
-Recommended buttons:
-
-INV - Button - Force Sort
-INV - Button - Pause Contracts
-INV - Button - Resume Contracts
-INV - Button - Reset Contracts
-INV - Button - Clear Alerts
-INV - Button - Status Refresh
-
-
-RESERVES
-========
-
-Reserves are configured at the top of the script in the RESERVES dictionary.
-
-The script calculates availability as:
-
-Available = Base inventory - reserve - assigned/staged inventory
-
-The intent is to protect your base first, then fulfill contracts and loadouts with safe surplus.
-
-[Reserve] containers are also protected from normal draining.
-
-
-PRODUCTION QUOTAS
-=================
-
-Production quotas are configured at the top of the script in PRODUCTION_QUOTAS.
-
-The script tries to keep listed components, ammo, tools, weapons, and bottles at or above quota by queueing assembler jobs.
-
-Blueprint names may vary by update or mods. If a specific item does not queue correctly, check the debug LCD and adjust the BlueprintForItem section in the script.
-
-
-SURPLUS DISASSEMBLY
-===================
-
-The DISASSEMBLY_MAX dictionary controls what can be automatically disassembled when too much is in storage.
-
-Only listed items are eligible.
-
-Example:
-
-Radio-communication Component = 200
-
-If you salvage POIs and collect 850 radio components, the script can queue the surplus above 200 for disassembly.
-
-Tools, weapons, ammo, bottles, food, and contract-assigned items should not be automatically disassembled unless deliberately added to the list.
-
-
-DEBUG LCD
-=========
-
-The [InventoryDebug] LCD reports:
-
-- Dry run status
-- Space/planetary mode
-- Last command
-- Last alert
-- Number of blocks found
-- Trade connector found/connected
-- Loadout/transport connector found/connected
-- Salvage connector found/connected
-- Important LCDs found/missing
-
-This is meant to help diagnose missing tags, bad connector setup, or missing cargo containers.
-
-
-STARTER WORLD ADVICE
-====================
-
-For your new Mars world, it is safe to start with:
-
-- Plumb drill controlled by event controllers and timer blocks
-- Basic refineries and assemblers
-- Inventory room
-- Cargo storage backbone
-- Status/debug LCDs
-- DRY_RUN_MODE enabled
-
-You do not need trade ships, salvage docks, outpost loadouts, or refinery assignments on day one. You can build those later and enable/use them as the base grows.
-
-
-KNOWN LIMITATIONS OF THIS STARTER SCRIPT
-========================================
-
-This is a first functional framework. Some item display names and blueprint IDs may need adjustment depending on current vanilla definitions, mods, DLC blocks, or future game updates.
-
-Always test in dry-run mode first.
-
-If an item does not sort or assemble correctly, the likely fix is to adjust either:
-
-- ItemDisplayName()
-- BlueprintForItem()
-- The item name used on an LCD
-
-The script is intentionally modular so it can be upgraded later without rewriting the whole system.
