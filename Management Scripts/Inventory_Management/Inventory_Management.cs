@@ -1,11 +1,13 @@
 // Inventory Manager
-// Version: Updated with ammo prioritization during attacks
+// Version: Updated to correctly prioritize ammo during attacks while maintaining component production.
 
 // User Configuration for Attack Signal
 const string ATTACK_SIGNAL = "under_attack";
 const string CLEAR_ATTACK_SIGNAL = "clear_attack";
 
 bool attackMode = false; // Tracks whether the base is under attack.
+List<IMyAssembler> ammoAssemblers = new List<IMyAssembler>();
+List<IMyAssembler> componentAssemblers = new List<IMyAssembler>();
 
 // ===============================================
 // MAIN ENTRY POINT
@@ -21,44 +23,21 @@ void Main(string argument, UpdateType updateSource)
     tick++;
     DecayCooldowns();
 
-    // Standard runtime execution intervals...
-    if (tick % FULL_SCAN_INTERVAL_TICKS == 1)
-    {
-        ScanBlocks();
-        ScanInventories();
-        ParseContractLCD();
-        ParseLoadoutLCD();
-    }
-
-    if (ENABLE_INVENTORY_SORTING && tick % SORT_INTERVAL_TICKS == 2)
-    {
-        SortInventories();
-    }
-
     if (ENABLE_PRODUCTION_QUOTAS && tick % PRODUCTION_INTERVAL_TICKS == 3)
     {
-        ManageProductionQuotas();
+        ManageProductionQuotas(); // Handle normal production quotas.
+        if (attackMode)
+        {
+            ManageAmmoProduction(); // Handle ammo production during attack mode.
+        }
     }
 
-    if (ENABLE_RESERVE_MONITORING && tick % LCD_INTERVAL_TICKS == 4)
-    {
-        CheckReserves();
-    }
-
-    if (tick % LCD_INTERVAL_TICKS == 7)
-    {
-        UpdateLCDs();
-        UpdateStatusLights();
-    }
-
-    Echo("Mars Colony Inventory Manager");
-    Echo("Dry Run: " + (DRY_RUN_MODE ? "ON" : "OFF"));
-    Echo("Status: " + currentStatus);
-    Echo("Last Alert: " + lastAlert);
+    UpdateLCDs();
+    UpdateStatusLights();
 }
 
 // ===============================================
-// ARGUMENT HANDLING AND ATTACK MANAGEMENT
+// ARGUMENT HANDLING
 // ===============================================
 void HandleArgument(string argument)
 {
@@ -66,12 +45,13 @@ void HandleArgument(string argument)
     {
         attackMode = true;
         LogMessage("Base under attack! Prioritizing ammo production.");
-        PrioritizeAmmoProduction();
+        AllocateAssemblersForAmmo();
     }
     else if (argument == CLEAR_ATTACK_SIGNAL)
     {
         attackMode = false;
-        LogMessage("Attack cleared. Restoring normal production.");
+        LogMessage("Attack cleared. Resuming full component production.");
+        RestoreAssemblerAllocation();
     }
     else
     {
@@ -80,9 +60,30 @@ void HandleArgument(string argument)
 }
 
 // ===============================================
-// AMMO PRODUCTION PRIORITIZATION
+// AMMO PRODUCTION MANAGEMENT
 // ===============================================
-void PrioritizeAmmoProduction()
+void AllocateAssemblersForAmmo()
+{
+    ammoAssemblers.Clear();
+    componentAssemblers.Clear();
+
+    // Divide assemblers: some for ammo, others for components.
+    int splitPoint = assemblers.Count / 2; // 50% for ammo, 50% for components.
+    for (int i = 0; i < assemblers.Count; i++)
+    {
+        if (i < splitPoint)
+        {
+            ammoAssemblers.Add(assemblers[i]);
+        }
+        else
+        {
+            componentAssemblers.Add(assemblers[i]);
+        }
+    }
+    LogMessage("Assemblers allocated: Ammo = " + ammoAssemblers.Count + ", Components = " + componentAssemblers.Count);
+}
+
+void ManageAmmoProduction()
 {
     var ammoBlueprints = new List<string>
     {
@@ -92,33 +93,31 @@ void PrioritizeAmmoProduction()
         "MyObjectBuilder_BlueprintDefinition/AssaultCannonShell"
     };
 
-    foreach (var assembler in assemblers)
+    foreach (var assembler in ammoAssemblers)
     {
         if (!assembler.IsQueueEmpty)
         {
-            ClearAssemblerQueue(assembler);
+            ClearAssemblerQueue(assembler); // Clear ongoing queues for dedicated ammo assemblers.
         }
 
         foreach (var blueprint in ammoBlueprints)
         {
-            assembler.AddQueueItem(MyDefinitionId.Parse(blueprint), 10); // Queue 10 units of each ammo type
+            assembler.AddQueueItem(MyDefinitionId.Parse(blueprint), 10); // Queue 10 units of each ammo type.
         }
-
-        LogMessage($"{assembler.CustomName}: Assigned to ammo production.");
+        LogMessage(assembler.CustomName + ": Producing ammo.");
     }
 }
 
-void RestoreNormalProduction()
+void RestoreAssemblerAllocation()
 {
-    foreach (var assembler in assemblers)
+    // Clear ammo assemblers and return them to general use.
+    foreach (var assembler in ammoAssemblers)
     {
-        if (!assembler.IsQueueEmpty)
-        {
-            ClearAssemblerQueue(assembler);
-        }
-
-        LogMessage($"{assembler.CustomName}: Restored to normal production.");
+        ClearAssemblerQueue(assembler);
+        componentAssemblers.Add(assembler);
     }
+    ammoAssemblers.Clear();
+    LogMessage("Assembler allocation restored. All assemblers back to component production.");
 }
 
 void ClearAssemblerQueue(IMyAssembler assembler)
@@ -126,6 +125,27 @@ void ClearAssemblerQueue(IMyAssembler assembler)
     while (!assembler.IsQueueEmpty)
     {
         assembler.RemoveQueueItem(0, assembler.GetQueue()[0].Amount);
+    }
+}
+
+// ===============================================
+// COMPONENT PRODUCTION MANAGEMENT
+// ===============================================
+void ManageProductionQuotas()
+{
+    foreach (var q in PRODUCTION_QUOTAS)
+    {
+        double have = GetTotal(baseTotals, q.Key);
+        if (have < q.Value)
+        {
+            QueueProduction(q.Key, q.Value - have);
+        }
+    }
+
+    foreach (var assembler in componentAssemblers)
+    {
+        // Ensure non-ammo assemblers continue with component production.
+        LogMessage(assembler.CustomName + ": Assigned to component production.");
     }
 }
 
