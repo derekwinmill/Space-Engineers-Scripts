@@ -1,4 +1,4 @@
-﻿// Inventory Manager
+// Inventory Manager
 // Version: 0.1 starter build
 // Designed for Space Engineers programmable block
 // Copy everything in this file into a Programmable Block.
@@ -26,6 +26,18 @@ const bool ENABLE_REFINERY_ASSIGNMENT = true;
 const bool ENABLE_STATUS_LIGHTS = true;
 const bool ENABLE_BROADCASTS = true;
 const bool ENABLE_DEBUG_LCD = true;
+
+// ============================================================
+// CROSS-SCRIPT INTEGRATION
+// Tag the Programmable Blocks of the other scripts with these names
+// so this script can send commands back to them.
+// ============================================================
+
+const string DEFENSE_PB_NAME   = "Base Defense PB";   // CustomName of Base_Defense programmable block
+const string POWER_PB_NAME     = "Power Management PB"; // CustomName of Power_Management programmable block
+
+// How much to multiply ammo quotas during combat. 2.0 = double normal quota.
+const double COMBAT_AMMO_MULTIPLIER = 2.0;
 
 // Runtime cadence. Keep these conservative for sim speed.
 const int FULL_SCAN_INTERVAL_TICKS = 20;      // about every 2 seconds at Update10
@@ -257,6 +269,11 @@ string lastCommand = "none";
 string currentStatus = "Idle";
 string lastAlert = "None";
 
+// ---- Combat Mode State ----
+bool combatMode = false;
+// Stores original ammo quotas so they can be restored after combat ends.
+Dictionary<string, double> baseAmmoQuotas = new Dictionary<string, double>();
+
 Dictionary<string, double> totals = new Dictionary<string, double>();
 Dictionary<string, double> baseTotals = new Dictionary<string, double>();
 Dictionary<string, double> contractRequests = new Dictionary<string, double>();
@@ -405,9 +422,100 @@ void HandleCommand(string cmd)
         UpdateLCDs();
         currentStatus = "Status refreshed";
     }
+    // ---- Combat Mode Commands (sent by Base_Defense PB) ----
+    else if (cmd == "combat_mode")
+    {
+        EnterCombatMode();
+    }
+    else if (cmd == "clear_combat")
+    {
+        ExitCombatMode();
+    }
     else
     {
         lastAlert = "Unknown command: " + cmd;
+    }
+}
+
+// ============================================================
+// COMBAT MODE
+// Called by Base_Defense via TryRun("combat_mode") / TryRun("clear_combat")
+// ============================================================
+
+void EnterCombatMode()
+{
+    if (combatMode) return; // already in combat, ignore duplicate trigger
+
+    combatMode = true;
+
+    // Pause trade contracts and loadout — don't waste resources during a fight.
+    contractsPaused = true;
+    loadoutPaused   = true;
+
+    // Save current ammo quotas and apply boosted values.
+    baseAmmoQuotas.Clear();
+    List<string> ammoKeys = new List<string>();
+    foreach (var kv in PRODUCTION_QUOTAS)
+    {
+        if (IsAmmoItem(kv.Key)) ammoKeys.Add(kv.Key);
+    }
+    foreach (string key in ammoKeys)
+    {
+        baseAmmoQuotas[key] = PRODUCTION_QUOTAS[key];
+        PRODUCTION_QUOTAS[key] = PRODUCTION_QUOTAS[key] * COMBAT_AMMO_MULTIPLIER;
+    }
+
+    currentStatus = "COMBAT MODE - Ammo priority active";
+    lastAlert     = "Under attack! Ammo quotas boosted x" + COMBAT_AMMO_MULTIPLIER;
+    Echo(lastAlert);
+}
+
+void ExitCombatMode()
+{
+    if (!combatMode) return; // already clear
+
+    combatMode = false;
+
+    // Restore original ammo quotas.
+    foreach (var kv in baseAmmoQuotas)
+    {
+        PRODUCTION_QUOTAS[kv.Key] = kv.Value;
+    }
+    baseAmmoQuotas.Clear();
+
+    // Resume normal operations.
+    contractsPaused = false;
+    loadoutPaused   = false;
+
+    lastAlert     = "None";
+    currentStatus = "Combat cleared - normal operations resumed";
+    Echo(currentStatus);
+}
+
+bool IsAmmoItem(string itemName)
+{
+    return itemName.Contains("magazine") ||
+           itemName.Contains("Missile")  ||
+           itemName.Contains("Shell")    ||
+           itemName.Contains("Autocannon");
+}
+
+// Send a command string to another script's programmable block by name.
+void SendToPB(string pbName, string command)
+{
+    IMyProgrammableBlock pb = GridTerminalSystem.GetBlockWithName(pbName) as IMyProgrammableBlock;
+    if (pb == null)
+    {
+        Echo("WARNING: PB not found: " + pbName);
+        return;
+    }
+    if (!DRY_RUN_MODE)
+    {
+        pb.TryRun(command);
+    }
+    else
+    {
+        Echo("[DryRun] Would send '" + command + "' to " + pbName);
     }
 }
 
@@ -914,6 +1022,8 @@ void DecayCooldowns()
 
 void ManageProductionQuotas()
 {
+    // In combat mode the active quotas already have boosted ammo values —
+    // no extra logic needed here; EnterCombatMode patched PRODUCTION_QUOTAS directly.
     foreach (var q in PRODUCTION_QUOTAS)
     {
         double have = GetTotal(baseTotals, q.Key);
@@ -961,6 +1071,9 @@ void QueueProduction(string itemName, double amount)
 
 void ManageSurplusDisassembly()
 {
+    // Suspend disassembly during combat — keep all components available.
+    if (combatMode) return;
+
     IMyAssembler disassembler = GetPrimaryAssembler(true);
     if (disassembler == null) return;
 
@@ -1207,6 +1320,7 @@ void WriteStatusLCD()
     sb.AppendLine("====================");
     sb.AppendLine("Dry Run: " + (DRY_RUN_MODE ? "ON" : "OFF"));
     sb.AppendLine("Mode: " + (SPACE_MODE ? "SPACE" : "PLANETARY"));
+    sb.AppendLine("Combat Mode: " + (combatMode ? "*** ACTIVE ***" : "Normal"));
     sb.AppendLine("Status: " + currentStatus);
     sb.AppendLine("Alert: " + lastAlert);
     sb.AppendLine();
@@ -1290,6 +1404,7 @@ void WriteDebugLCD()
     sb.AppendLine("===============");
     sb.AppendLine("Dry Run: " + (DRY_RUN_MODE ? "ENABLED" : "DISABLED"));
     sb.AppendLine("Space Mode: " + (SPACE_MODE ? "YES" : "NO"));
+    sb.AppendLine("Combat Mode: " + (combatMode ? "ACTIVE" : "OFF"));
     sb.AppendLine("Last Command: " + lastCommand);
     sb.AppendLine("Last Alert: " + lastAlert);
     sb.AppendLine();
