@@ -86,6 +86,7 @@ const string TAG_STATUS_LCD = "[InventoryStatus]";
 const string TAG_DEBUG_LCD = "[InventoryDebug]";
 const string TAG_LEGEND_LCD = "[InventoryLegend]";
 const string TAG_REFINERY_STATUS_LCD = "[RefineryStatus]";
+const string TAG_PRODUCTION_SETTINGS_LCD = "[ProductionSettings]";
 
 const string STATUS_LIGHT_GROUP_NAME = "InventoryStatusLights";
 const string BROADCAST_BLOCK_TAG = "[InventoryBroadcast]"; // antenna, beacon, or text panel name tag
@@ -97,11 +98,11 @@ const string COBALT_ORE_LIGHT_GROUP = "CobaltOreStatusLights";
 const string SILICON_ORE_LIGHT_GROUP = "SiliconOreStatusLights";
 const string MAGNESIUM_ORE_LIGHT_GROUP = "MagnesiumOreStatusLights";
 
-const string RELAY_IRON_ORE_NEEDED = "[Relay:Iron]";
-const string RELAY_NICKEL_ORE_NEEDED = "[Relay:Nickel]";
-const string RELAY_COBALT_ORE_NEEDED = "[Relay:Cobalt]";
-const string RELAY_SILICON_ORE_NEEDED = "[Relay:Silicon]";
-const string RELAY_MAGNESIUM_ORE_NEEDED = "[Relay:Magnesium]";
+const string RELAY_IRON_ORE_NEEDED = "[Relay:Fe]";
+const string RELAY_NICKEL_ORE_NEEDED = "[Relay:Ni]";
+const string RELAY_COBALT_ORE_NEEDED = "[Relay:Co]";
+const string RELAY_SILICON_ORE_NEEDED = "[Relay:Si]";
+const string RELAY_MAGNESIUM_ORE_NEEDED = "[Relay:Mg]";
 
 // ============================================================
 // TRADE / LOADOUT SETTINGS
@@ -185,14 +186,43 @@ Dictionary<string, double> PRODUCTION_QUOTAS = new Dictionary<string, double>()
     {"Autocannon Magazine", 100},
     {"Assault Cannon Shell", 50},
 
+    // Tools — tiers 1-4 (0 = do not produce by default; configure via [ProductionSettings] LCD)
     {"Welder", 4},
+    {"Enhanced Welder", 0},
+    {"Proficient Welder", 0},
+    {"Elite Welder", 1},
     {"Grinder", 4},
+    {"Enhanced Grinder", 0},
+    {"Proficient Grinder", 0},
+    {"Elite Grinder", 1},
     {"Hand Drill", 4},
+    {"Enhanced Hand Drill", 0},
+    {"Proficient Hand Drill", 0},
+    {"Elite Hand Drill", 1},
+
+    // Rifles
     {"Automatic Rifle", 4},
     {"Precise Automatic Rifle", 2},
-    {"Elite Welder", 1},
-    {"Elite Grinder", 1},
-    {"Elite Hand Drill", 1},
+    {"Rapid-Fire Automatic Rifle", 0},
+    {"Elite Automatic Rifle", 0},
+
+    // Pistols
+    {"Semi-Auto Pistol", 0},
+    {"Enhanced Semi-Auto Pistol", 0},
+    {"Elite Pistol", 0},
+    {"Full Auto Pistol", 0},
+    {"Enhanced Full Auto Pistol", 0},
+
+    // Launchers
+    {"Basic Rocket Launcher", 0},
+    {"Rocket Launcher", 0},
+
+    // Additional ammo
+    {"Artillery Shell", 0},
+    {"Large Railgun Sabot", 0},
+    {"Small Railgun Sabot", 0},
+    {"S-10 Pistol Magazine", 0},
+    {"MR-30E Pistol Magazine", 0},
 
     {"Hydrogen Bottle", 10},
     {"Oxygen Bottle", 6},
@@ -226,8 +256,13 @@ Dictionary<string, double> DISASSEMBLY_MAX = new Dictionary<string, double>()
 
 // ============================================================
 // ORE REFINERY SETTINGS
-// Refineries are assigned by name tag: [Refine:Iron], [Refine:Nickel], etc.
-// The script loads only that ore type into that refinery.
+// Dedicated refineries: tag a refinery with one or more [Refine:X] tags.
+//   e.g. "Refinery [Refine:Fe]" processes only iron.
+//        "Refinery [Refine:Fe][Refine:Ni]" handles iron and nickel, choosing
+//        whichever ingot is most below reserve at any given time.
+// General refineries: no [Refine:] tag — automatically processes whichever
+//   ore produces the ingot most below its reserve target. Unloads wrong ore
+//   before switching so it responds to base needs dynamically.
 // ============================================================
 
 Dictionary<string, double> ORE_LOW_THRESHOLDS = new Dictionary<string, double>()
@@ -245,15 +280,30 @@ Dictionary<string, double> ORE_LOW_THRESHOLDS = new Dictionary<string, double>()
 
 Dictionary<string, string> REFINERY_TAG_BY_ORE = new Dictionary<string, string>()
 {
-    {"Iron Ore", "[Refine:Iron]"},
-    {"Nickel Ore", "[Refine:Nickel]"},
-    {"Cobalt Ore", "[Refine:Cobalt]"},
-    {"Silicon Ore", "[Refine:Silicon]"},
-    {"Magnesium Ore", "[Refine:Magnesium]"},
-    {"Silver Ore", "[Refine:Silver]"},
-    {"Gold Ore", "[Refine:Gold]"},
-    {"Platinum Ore", "[Refine:Platinum]"},
-    {"Uranium Ore", "[Refine:Uranium]"},
+    {"Iron Ore", "[Refine:Fe]"},
+    {"Nickel Ore", "[Refine:Ni]"},
+    {"Cobalt Ore", "[Refine:Co]"},
+    {"Silicon Ore", "[Refine:Si]"},
+    {"Magnesium Ore", "[Refine:Mg]"},
+    {"Silver Ore", "[Refine:Ag]"},
+    {"Gold Ore", "[Refine:Au]"},
+    {"Platinum Ore", "[Refine:Pt]"},
+    {"Uranium Ore", "[Refine:U]"},
+};
+
+// Maps ore types to the ingot they produce — used by general refineries to
+// prioritise whichever ingot is furthest below its reserve target.
+Dictionary<string, string> ORE_TO_INGOT = new Dictionary<string, string>()
+{
+    {"Iron Ore",     "Iron Ingot"},
+    {"Nickel Ore",   "Nickel Ingot"},
+    {"Cobalt Ore",   "Cobalt Ingot"},
+    {"Silicon Ore",  "Silicon Wafer"},
+    {"Magnesium Ore","Magnesium Powder"},
+    {"Silver Ore",   "Silver Ingot"},
+    {"Gold Ore",     "Gold Ingot"},
+    {"Platinum Ore", "Platinum Ingot"},
+    {"Uranium Ore",  "Uranium Ingot"},
 };
 
 // ============================================================
@@ -271,8 +321,14 @@ string lastAlert = "None";
 
 // ---- Combat Mode State ----
 bool combatMode = false;
-// Stores original ammo quotas so they can be restored after combat ends.
-Dictionary<string, double> baseAmmoQuotas = new Dictionary<string, double>();
+
+// ---- LCD-configured production overrides ----
+// Populated by ParseProductionSettingsLCD each scan cycle.
+// Format on the [ProductionSettings] LCD: Item Name = min/max
+//   min → production quota override, max → surplus-disassembly ceiling override.
+//   Set either to 0 to disable that behaviour for the item.
+Dictionary<string, double> lcdProductionMins  = new Dictionary<string, double>();
+Dictionary<string, double> lcdProductionMaxes = new Dictionary<string, double>();
 
 Dictionary<string, double> totals = new Dictionary<string, double>();
 Dictionary<string, double> baseTotals = new Dictionary<string, double>();
@@ -314,6 +370,7 @@ void Main(string argument, UpdateType updateSource)
         ScanInventories();
         ParseContractLCD();
         ParseLoadoutLCD();
+        ParseProductionSettingsLCD();
     }
 
     if (ENABLE_INVENTORY_SORTING && tick % SORT_INTERVAL_TICKS == 2)
@@ -431,6 +488,15 @@ void HandleCommand(string cmd)
     {
         ExitCombatMode();
     }
+    // ---- Power Management Commands (sent by Power_Management PB) ----
+    else if (cmd == "power_critical")
+    {
+        EnterPowerEmergency();
+    }
+    else if (cmd == "power_ok")
+    {
+        ExitPowerEmergency();
+    }
     else
     {
         lastAlert = "Unknown command: " + cmd;
@@ -444,27 +510,13 @@ void HandleCommand(string cmd)
 
 void EnterCombatMode()
 {
-    if (combatMode) return; // already in combat, ignore duplicate trigger
+    if (combatMode) return;
 
     combatMode = true;
-
-    // Pause trade contracts and loadout — don't waste resources during a fight.
     contractsPaused = true;
     loadoutPaused   = true;
 
-    // Save current ammo quotas and apply boosted values.
-    baseAmmoQuotas.Clear();
-    List<string> ammoKeys = new List<string>();
-    foreach (var kv in PRODUCTION_QUOTAS)
-    {
-        if (IsAmmoItem(kv.Key)) ammoKeys.Add(kv.Key);
-    }
-    foreach (string key in ammoKeys)
-    {
-        baseAmmoQuotas[key] = PRODUCTION_QUOTAS[key];
-        PRODUCTION_QUOTAS[key] = PRODUCTION_QUOTAS[key] * COMBAT_AMMO_MULTIPLIER;
-    }
-
+    // The combat multiplier is applied inside ManageProductionQuotas while combatMode is true.
     currentStatus = "COMBAT MODE - Ammo priority active";
     lastAlert     = "Under attack! Ammo quotas boosted x" + COMBAT_AMMO_MULTIPLIER;
     Echo(lastAlert);
@@ -472,18 +524,9 @@ void EnterCombatMode()
 
 void ExitCombatMode()
 {
-    if (!combatMode) return; // already clear
+    if (!combatMode) return;
 
     combatMode = false;
-
-    // Restore original ammo quotas.
-    foreach (var kv in baseAmmoQuotas)
-    {
-        PRODUCTION_QUOTAS[kv.Key] = kv.Value;
-    }
-    baseAmmoQuotas.Clear();
-
-    // Resume normal operations.
     contractsPaused = false;
     loadoutPaused   = false;
 
@@ -492,11 +535,39 @@ void ExitCombatMode()
     Echo(currentStatus);
 }
 
+// ---- Power Emergency State ----
+// Tracks whether contracts/loadout were paused specifically by a power_critical signal,
+// so power_ok can restore them without overriding user-initiated pauses.
+bool powerPausedContracts = false;
+bool powerPausedLoadout   = false;
+
+void EnterPowerEmergency()
+{
+    if (!contractsPaused) { contractsPaused = true; powerPausedContracts = true; }
+    if (!loadoutPaused)   { loadoutPaused   = true; powerPausedLoadout   = true; }
+
+    lastAlert     = "Power critical - operations suspended by Power Management";
+    currentStatus = "POWER EMERGENCY - contracts and loadout paused";
+    Echo(lastAlert);
+}
+
+void ExitPowerEmergency()
+{
+    if (powerPausedContracts) { contractsPaused = false; powerPausedContracts = false; }
+    if (powerPausedLoadout)   { loadoutPaused   = false; powerPausedLoadout   = false; }
+
+    lastAlert     = "None";
+    currentStatus = "Power restored - operations resumed";
+    Echo(currentStatus);
+}
+
 bool IsAmmoItem(string itemName)
 {
     return itemName.Contains("magazine") ||
+           itemName.Contains("Magazine") ||
            itemName.Contains("Missile")  ||
            itemName.Contains("Shell")    ||
+           itemName.Contains("Sabot")    ||
            itemName.Contains("Autocannon");
 }
 
@@ -606,24 +677,65 @@ string ItemDisplayName(MyInventoryItem item)
         return subtype + " Ingot";
     }
 
-    string friendly = subtype;
-    friendly = friendly.Replace("SteelPlate", "Steel Plate");
-    friendly = friendly.Replace("InteriorPlate", "Interior Plate");
-    friendly = friendly.Replace("Construction", "Construction Component");
-    friendly = friendly.Replace("Computer", "Computer");
-    friendly = friendly.Replace("Motor", "Motor");
-    friendly = friendly.Replace("Display", "Display");
-    friendly = friendly.Replace("Medical", "Medical Component");
-    friendly = friendly.Replace("RadioCommunication", "Radio-communication Component");
-    friendly = friendly.Replace("LargeTube", "Large Steel Tube");
-    friendly = friendly.Replace("SmallTube", "Small Steel Tube");
-    friendly = friendly.Replace("MetalGrid", "Metal Grid");
-    friendly = friendly.Replace("PowerCell", "Power Cell");
-    friendly = friendly.Replace("NATO_5p56x45mm", "5.56x45mm NATO magazine");
-    friendly = friendly.Replace("Missile200mm", "Missile 200mm");
-    friendly = friendly.Replace("HydrogenBottle", "Hydrogen Bottle");
-    friendly = friendly.Replace("OxygenBottle", "Oxygen Bottle");
-    return friendly;
+    // Component subtypes
+    if (subtype == "SteelPlate")           return "Steel Plate";
+    if (subtype == "InteriorPlate")        return "Interior Plate";
+    if (subtype == "Construction")         return "Construction Component";
+    if (subtype == "MetalGrid")            return "Metal Grid";
+    if (subtype == "LargeTube")            return "Large Steel Tube";
+    if (subtype == "SmallTube")            return "Small Steel Tube";
+    if (subtype == "Motor")                return "Motor";
+    if (subtype == "Computer")             return "Computer";
+    if (subtype == "Display")              return "Display";
+    if (subtype == "Medical")              return "Medical Component";
+    if (subtype == "RadioCommunication")   return "Radio-communication Component";
+    if (subtype == "PowerCell")            return "Power Cell";
+    if (subtype == "SolarCell")            return "Solar Cell";
+    if (subtype == "BulletproofGlass")     return "Bulletproof Glass";
+    if (subtype == "Girder")               return "Girder";
+    if (subtype == "ReactorComponent")     return "Reactor Component";
+    if (subtype == "ThrustComponent")      return "Thrust Component";
+    // Gas
+    if (subtype == "HydrogenBottle")       return "Hydrogen Bottle";
+    if (subtype == "OxygenBottle")         return "Oxygen Bottle";
+    // Ammo
+    if (subtype == "NATO_5p56x45mm")       return "5.56x45mm NATO magazine";
+    if (subtype == "Missile200mm")         return "Missile 200mm";
+    if (subtype == "AutocannonClip")       return "Autocannon Magazine";
+    if (subtype == "MediumCalibreAmmo")    return "Assault Cannon Shell";
+    if (subtype == "LargeCalibreAmmo")     return "Artillery Shell";
+    if (subtype == "LargeRailgunAmmo")     return "Large Railgun Sabot";
+    if (subtype == "SmallRailgunAmmo")     return "Small Railgun Sabot";
+    if (subtype == "SemiAutoPistolMagazine")  return "S-10 Pistol Magazine";
+    if (subtype == "FullAutoPistolMagazine")  return "MR-30E Pistol Magazine";
+    // Tools
+    if (subtype == "Welder")               return "Welder";
+    if (subtype == "Welder2")              return "Enhanced Welder";
+    if (subtype == "Welder3")              return "Proficient Welder";
+    if (subtype == "Welder4")              return "Elite Welder";
+    if (subtype == "AngleGrinder")         return "Grinder";
+    if (subtype == "AngleGrinder2")        return "Enhanced Grinder";
+    if (subtype == "AngleGrinder3")        return "Proficient Grinder";
+    if (subtype == "AngleGrinder4")        return "Elite Grinder";
+    if (subtype == "HandDrill")            return "Hand Drill";
+    if (subtype == "HandDrill2")           return "Enhanced Hand Drill";
+    if (subtype == "HandDrill3")           return "Proficient Hand Drill";
+    if (subtype == "HandDrill4")           return "Elite Hand Drill";
+    // Rifles
+    if (subtype == "AutomaticRifleGun" || subtype == "AutomaticRifle") return "Automatic Rifle";
+    if (subtype == "PreciseAutomaticRifleGun" || subtype == "PreciseAutomaticRifle") return "Precise Automatic Rifle";
+    if (subtype == "RapidFireAutomaticRifleGun" || subtype == "RapidFireAutomaticRifle") return "Rapid-Fire Automatic Rifle";
+    if (subtype == "UltimateAutomaticRifleGun" || subtype == "UltimateAutomaticRifle") return "Elite Automatic Rifle";
+    // Pistols
+    if (subtype == "SemiAutoPistolItem")          return "Semi-Auto Pistol";
+    if (subtype == "EnhancedSemiAutoPistolItem")  return "Enhanced Semi-Auto Pistol";
+    if (subtype == "ElitePistolItem")             return "Elite Pistol";
+    if (subtype == "FullAutoPistolItem")          return "Full Auto Pistol";
+    if (subtype == "EnhancedFullAutoPistolItem")  return "Enhanced Full Auto Pistol";
+    // Launchers
+    if (subtype == "BasicHandHeldLauncherItem")    return "Basic Rocket Launcher";
+    if (subtype == "AdvancedHandHeldLauncherItem") return "Rocket Launcher";
+    return subtype;
 }
 
 // ============================================================
@@ -644,6 +756,43 @@ void ParseLoadoutLCD()
     IMyTextPanel lcd = FindTextPanel(TAG_LOADOUT_LCD);
     if (lcd == null) return;
     ParseRequestText(lcd.GetText(), loadoutRequests);
+}
+
+// Reads a [ProductionSettings]-tagged LCD to configure per-item production min and
+// disassembly max at runtime without recompiling the script.
+// LCD format (one item per line):
+//   Item Name = min/max
+//   Welder = 8/20         (produce until 8, disassemble above 20)
+//   Elite Automatic Rifle = 2/5
+//   Autocannon Magazine = 0/500  (don't produce, but disassemble above 500)
+// Lines starting with # or // are comments and are ignored.
+void ParseProductionSettingsLCD()
+{
+    lcdProductionMins.Clear();
+    lcdProductionMaxes.Clear();
+    IMyTextPanel lcd = FindTextPanel(TAG_PRODUCTION_SETTINGS_LCD);
+    if (lcd == null) return;
+
+    string[] lines = lcd.GetText().Split('\n');
+    for (int i = 0; i < lines.Length; i++)
+    {
+        string line = lines[i].Trim();
+        if (line.Length == 0 || line.StartsWith("#") || line.StartsWith("//")) continue;
+        int eq = line.IndexOf('=');
+        if (eq < 0) continue;
+        string item = line.Substring(0, eq).Trim();
+        if (item.Length == 0) continue;
+        string vals = line.Substring(eq + 1).Trim();
+        int slash = vals.IndexOf('/');
+        if (slash < 0) continue;
+        double min, max;
+        string minPart = vals.Substring(0, slash).Trim();
+        string maxPart = vals.Substring(slash + 1).Trim();
+        if (minPart.Length > 0 && double.TryParse(minPart, out min))
+            lcdProductionMins[item] = min;
+        if (maxPart.Length > 0 && double.TryParse(maxPart, out max))
+            lcdProductionMaxes[item] = max;
+    }
 }
 
 void ParseRequestText(string text, Dictionary<string, double> output)
@@ -737,9 +886,10 @@ string TagForItem(string itemName)
     if (itemName.EndsWith(" Ore") || itemName == "Stone") return TAG_ORE;
     if (itemName.EndsWith(" Ingot") || itemName == "Silicon Wafer" || itemName == "Magnesium Powder") return TAG_INGOT;
     if (itemName.Contains("Bottle") || itemName == "Ice") return TAG_FUEL;
-    if (itemName.Contains("magazine") || itemName.Contains("Missile") || itemName.Contains("Shell")) return TAG_AMMO;
+    if (itemName.Contains("magazine") || itemName.Contains("Magazine") ||
+        itemName.Contains("Missile")  || itemName.Contains("Shell") || itemName.Contains("Sabot")) return TAG_AMMO;
     if (itemName.Contains("Welder") || itemName.Contains("Grinder") || itemName.Contains("Drill")) return TAG_TOOL;
-    if (itemName.Contains("Rifle")) return TAG_WEAPONS;
+    if (itemName.Contains("Rifle") || itemName.Contains("Pistol") || itemName.Contains("Launcher")) return TAG_WEAPONS;
     if (itemName == "Food" || itemName == "Seeds") return TAG_FOOD;
     return TAG_COMPONENT;
 }
@@ -940,25 +1090,107 @@ void ManageSalvageDock()
 
 void ManageRefineries()
 {
+    for (int i = 0; i < refineries.Count; i++)
+    {
+        IMyRefinery r = refineries[i];
+        List<string> dedicatedOres = GetDedicatedOres(r);
+        if (dedicatedOres.Count > 0)
+            ManageDedicatedRefinery(r, dedicatedOres);
+        else
+            ManageGeneralRefinery(r);
+    }
+}
+
+// Returns the list of ore types this refinery is dedicated to (from its [Refine:X] tags).
+// An empty list means the refinery is general-purpose.
+List<string> GetDedicatedOres(IMyRefinery r)
+{
+    List<string> result = new List<string>();
     foreach (var kv in REFINERY_TAG_BY_ORE)
     {
-        string oreName = kv.Key;
-        string refineryTag = kv.Value;
-        IMyRefinery refinery = FindRefinery(refineryTag);
-        if (refinery == null) continue;
+        if (r.CustomName.Contains(kv.Value))
+            result.Add(kv.Key);
+    }
+    return result;
+}
 
-        double oreAvailable = GetTotal(baseTotals, oreName);
-        double threshold = ORE_LOW_THRESHOLDS.ContainsKey(oreName) ? ORE_LOW_THRESHOLDS[oreName] : 0;
-        if (oreAvailable < threshold)
-        {
-            TriggerOreAlert(oreName);
-            continue;
-        }
+// Dedicated refinery: picks the most-needed ore from its allowed set and loads it.
+// Does NOT unload; it processes whatever is already there + new ore as needed.
+void ManageDedicatedRefinery(IMyRefinery r, List<string> allowedOres)
+{
+    string bestOre = GetHighestNeedOre(allowedOres);
+    if (bestOre == null) return;
 
-        if (!DRY_RUN_MODE)
+    double threshold = ORE_LOW_THRESHOLDS.ContainsKey(bestOre) ? ORE_LOW_THRESHOLDS[bestOre] : 0;
+    if (GetTotal(baseTotals, bestOre) < threshold)
+    {
+        TriggerOreAlert(bestOre);
+        return;
+    }
+
+    if (!DRY_RUN_MODE)
+        MoveItemToInventory(bestOre, 10000, r.GetInventory(0), false);
+}
+
+// General refinery: picks globally most-needed ore, unloads any other ore in the
+// input first so the refinery switches immediately rather than burning through the queue.
+void ManageGeneralRefinery(IMyRefinery r)
+{
+    string bestOre = GetHighestNeedOre(null);
+    if (bestOre == null) return;
+
+    if (!DRY_RUN_MODE)
+    {
+        UnloadRefineryInputExcept(r, bestOre);
+        MoveItemToInventory(bestOre, 10000, r.GetInventory(0), false);
+    }
+}
+
+// Picks the ore whose corresponding ingot is furthest below its RESERVES target,
+// considering only ores above their ORE_LOW_THRESHOLDS minimum.
+// Pass null for allowedOres to consider all ore types.
+string GetHighestNeedOre(List<string> allowedOres)
+{
+    string best = null;
+    double bestRatio = double.MaxValue;
+
+    foreach (var kv in ORE_TO_INGOT)
+    {
+        string oreName  = kv.Key;
+        string ingotName = kv.Value;
+
+        if (allowedOres != null && !allowedOres.Contains(oreName)) continue;
+
+        double oreHave = GetTotal(baseTotals, oreName);
+        double oreMin  = ORE_LOW_THRESHOLDS.ContainsKey(oreName) ? ORE_LOW_THRESHOLDS[oreName] : 0;
+        if (oreHave <= oreMin) continue; // not enough ore
+
+        double ingotHave   = GetTotal(baseTotals, ingotName);
+        double ingotTarget = RESERVES.ContainsKey(ingotName) ? RESERVES[ingotName] : 1;
+        if (ingotTarget <= 0) ingotTarget = 1;
+        double ratio = ingotHave / ingotTarget;
+
+        if (ratio < bestRatio)
         {
-            MoveItemToInventory(oreName, 10000, refinery.GetInventory(0), false);
+            bestRatio = ratio;
+            best = oreName;
         }
+    }
+    return best;
+}
+
+// Moves all ore types OTHER than keepOreName out of the refinery input and back to ore storage.
+void UnloadRefineryInputExcept(IMyRefinery r, string keepOreName)
+{
+    IMyInventory input = r.GetInventory(0);
+    List<MyInventoryItem> items = new List<MyInventoryItem>();
+    input.GetItems(items);
+    IMyCargoContainer oreStorage = FindCargoWithTag(TAG_ORE);
+    for (int j = items.Count - 1; j >= 0; j--)
+    {
+        if (ItemDisplayName(items[j]) == keepOreName) continue;
+        if (oreStorage != null)
+            input.TransferItemTo(oreStorage.GetInventory(0), j);
     }
 }
 
@@ -1022,20 +1254,25 @@ void DecayCooldowns()
 
 void ManageProductionQuotas()
 {
-    // In combat mode the active quotas already have boosted ammo values —
-    // no extra logic needed here; EnterCombatMode patched PRODUCTION_QUOTAS directly.
-    foreach (var q in PRODUCTION_QUOTAS)
+    // Build the union of hardcoded + LCD-configured item names to check.
+    HashSet<string> items = new HashSet<string>(PRODUCTION_QUOTAS.Keys);
+    foreach (var k in lcdProductionMins.Keys) items.Add(k);
+
+    foreach (string item in items)
     {
-        double have = GetTotal(baseTotals, q.Key);
-        if (have < q.Value)
-        {
-            QueueProduction(q.Key, q.Value - have);
-        }
+        double quota = GetEffectiveProductionMin(item);
+        if (quota <= 0) continue;
+
+        // Scale ammo quotas during combat.
+        if (combatMode && IsAmmoItem(item))
+            quota *= COMBAT_AMMO_MULTIPLIER;
+
+        double have = GetTotal(baseTotals, item);
+        if (have < quota) QueueProduction(item, quota - have);
     }
 
     foreach (var c in contractRequests)
     {
-        double have = GetTotal(baseTotals, c.Key);
         double available = AvailableForUse(c.Key);
         if (available < c.Value) QueueProduction(c.Key, c.Value - available);
     }
@@ -1045,6 +1282,21 @@ void ManageProductionQuotas()
         double available = AvailableForUse(l.Key);
         if (available < l.Value) QueueProduction(l.Key, l.Value - available);
     }
+}
+
+// LCD value takes precedence over hardcoded default.
+double GetEffectiveProductionMin(string item)
+{
+    if (lcdProductionMins.ContainsKey(item)) return lcdProductionMins[item];
+    if (PRODUCTION_QUOTAS.ContainsKey(item))  return PRODUCTION_QUOTAS[item];
+    return 0;
+}
+
+double GetEffectiveDisassemblyMax(string item)
+{
+    if (lcdProductionMaxes.ContainsKey(item)) return lcdProductionMaxes[item];
+    if (DISASSEMBLY_MAX.ContainsKey(item))     return DISASSEMBLY_MAX[item];
+    return 0;
 }
 
 void QueueProduction(string itemName, double amount)
@@ -1071,18 +1323,24 @@ void QueueProduction(string itemName, double amount)
 
 void ManageSurplusDisassembly()
 {
-    // Suspend disassembly during combat — keep all components available.
     if (combatMode) return;
 
     IMyAssembler disassembler = GetPrimaryAssembler(true);
     if (disassembler == null) return;
 
-    foreach (var max in DISASSEMBLY_MAX)
+    // Union of hardcoded + LCD-configured items.
+    HashSet<string> items = new HashSet<string>(DISASSEMBLY_MAX.Keys);
+    foreach (var k in lcdProductionMaxes.Keys) items.Add(k);
+
+    foreach (string item in items)
     {
-        double have = GetTotal(baseTotals, max.Key);
-        if (have <= max.Value) continue;
-        double excess = have - max.Value;
-        string blueprint = BlueprintForItem(max.Key);
+        double maxVal = GetEffectiveDisassemblyMax(item);
+        if (maxVal <= 0) continue; // 0 = don't auto-disassemble
+
+        double have = GetTotal(baseTotals, item);
+        if (have <= maxVal) continue;
+        double excess = have - maxVal;
+        string blueprint = BlueprintForItem(item);
         if (blueprint == "") continue;
         if (!DRY_RUN_MODE)
         {
@@ -1093,7 +1351,7 @@ void ManageSurplusDisassembly()
             }
             catch
             {
-                lastAlert = "Could not queue disassembly for " + max.Key;
+                lastAlert = "Could not queue disassembly for " + item;
             }
         }
     }
@@ -1111,29 +1369,67 @@ IMyAssembler GetPrimaryAssembler(bool disassembly)
 
 string BlueprintForItem(string itemName)
 {
-    // Blueprint names vary across updates/mods. These are common vanilla blueprint ids.
+    // Blueprint IDs for vanilla SE. Adjust if running with mods.
     Dictionary<string, string> bp = new Dictionary<string, string>()
     {
-        {"Steel Plate", "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
-        {"Interior Plate", "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
-        {"Construction Component", "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
-        {"Motor", "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
-        {"Computer", "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
-        {"Large Steel Tube", "MyObjectBuilder_BlueprintDefinition/LargeTube"},
-        {"Small Steel Tube", "MyObjectBuilder_BlueprintDefinition/SmallTube"},
-        {"Metal Grid", "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
-        {"Power Cell", "MyObjectBuilder_BlueprintDefinition/PowerCell"},
-        {"Display", "MyObjectBuilder_BlueprintDefinition/Display"},
-        {"Medical Component", "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
-        {"Radio-communication Component", "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
-        {"5.56x45mm NATO magazine", "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
-        {"Missile 200mm", "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
-        {"Hydrogen Bottle", "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
-        {"Oxygen Bottle", "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
-        {"Welder", "MyObjectBuilder_BlueprintDefinition/Welder"},
-        {"Grinder", "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
-        {"Hand Drill", "MyObjectBuilder_BlueprintDefinition/HandDrill"},
-        {"Automatic Rifle", "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
+        // Components
+        {"Steel Plate",                    "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
+        {"Interior Plate",                 "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
+        {"Construction Component",         "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
+        {"Motor",                          "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
+        {"Computer",                       "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
+        {"Large Steel Tube",               "MyObjectBuilder_BlueprintDefinition/LargeTube"},
+        {"Small Steel Tube",               "MyObjectBuilder_BlueprintDefinition/SmallTube"},
+        {"Metal Grid",                     "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
+        {"Power Cell",                     "MyObjectBuilder_BlueprintDefinition/PowerCell"},
+        {"Display",                        "MyObjectBuilder_BlueprintDefinition/Display"},
+        {"Medical Component",              "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
+        {"Radio-communication Component",  "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
+        {"Reactor Component",              "MyObjectBuilder_BlueprintDefinition/ReactorComponent"},
+        {"Thrust Component",               "MyObjectBuilder_BlueprintDefinition/ThrustComponent"},
+        {"Solar Cell",                     "MyObjectBuilder_BlueprintDefinition/SolarCell"},
+        {"Bulletproof Glass",              "MyObjectBuilder_BlueprintDefinition/BulletproofGlass"},
+        {"Girder",                         "MyObjectBuilder_BlueprintDefinition/Girder"},
+        // Gas
+        {"Hydrogen Bottle",                "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
+        {"Oxygen Bottle",                  "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
+        // Ammo
+        {"5.56x45mm NATO magazine",        "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
+        {"Missile 200mm",                  "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
+        {"Autocannon Magazine",            "MyObjectBuilder_BlueprintDefinition/AutocannonClip"},
+        {"Assault Cannon Shell",           "MyObjectBuilder_BlueprintDefinition/MediumCalibreAmmo"},
+        {"Artillery Shell",                "MyObjectBuilder_BlueprintDefinition/LargeCalibreAmmo"},
+        {"Large Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/LargeRailgunAmmo"},
+        {"Small Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/SmallRailgunAmmo"},
+        {"S-10 Pistol Magazine",           "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolMagazine"},
+        {"MR-30E Pistol Magazine",         "MyObjectBuilder_BlueprintDefinition/FullAutoPistolMagazine"},
+        // Tools — tiers 1-4
+        {"Welder",                         "MyObjectBuilder_BlueprintDefinition/Welder"},
+        {"Enhanced Welder",                "MyObjectBuilder_BlueprintDefinition/Welder2"},
+        {"Proficient Welder",              "MyObjectBuilder_BlueprintDefinition/Welder3"},
+        {"Elite Welder",                   "MyObjectBuilder_BlueprintDefinition/Welder4"},
+        {"Grinder",                        "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
+        {"Enhanced Grinder",               "MyObjectBuilder_BlueprintDefinition/AngleGrinder2"},
+        {"Proficient Grinder",             "MyObjectBuilder_BlueprintDefinition/AngleGrinder3"},
+        {"Elite Grinder",                  "MyObjectBuilder_BlueprintDefinition/AngleGrinder4"},
+        {"Hand Drill",                     "MyObjectBuilder_BlueprintDefinition/HandDrill"},
+        {"Enhanced Hand Drill",            "MyObjectBuilder_BlueprintDefinition/HandDrill2"},
+        {"Proficient Hand Drill",          "MyObjectBuilder_BlueprintDefinition/HandDrill3"},
+        {"Elite Hand Drill",               "MyObjectBuilder_BlueprintDefinition/HandDrill4"},
+        // Rifles
+        {"Automatic Rifle",                "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
+        {"Precise Automatic Rifle",        "MyObjectBuilder_BlueprintDefinition/PreciseAutomaticRifle"},
+        {"Rapid-Fire Automatic Rifle",     "MyObjectBuilder_BlueprintDefinition/RapidFireAutomaticRifle"},
+        {"Elite Automatic Rifle",          "MyObjectBuilder_BlueprintDefinition/UltimateAutomaticRifle"},
+        // Pistols
+        {"Semi-Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolItem"},
+        {"Enhanced Semi-Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedSemiAutoPistolItem"},
+        {"Elite Pistol",                   "MyObjectBuilder_BlueprintDefinition/ElitePistolItem"},
+        {"Full Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/FullAutoPistolItem"},
+        {"Enhanced Full Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedFullAutoPistolItem"},
+        // Launchers
+        {"Basic Rocket Launcher",          "MyObjectBuilder_BlueprintDefinition/BasicHandHeldLauncherItem"},
+        {"Rocket Launcher",                "MyObjectBuilder_BlueprintDefinition/AdvancedHandHeldLauncherItem"},
     };
     if (bp.ContainsKey(itemName)) return bp[itemName];
     return "";
