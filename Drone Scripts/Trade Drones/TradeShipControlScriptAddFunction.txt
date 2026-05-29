@@ -1,0 +1,128 @@
+TRADE SHIP CONTROL SCRIPT — FEATURE IMPLEMENTATION NOTE
+========================================================
+
+Feature:    Automatic [ContractReturn] Tag Management
+Priority:   Implement early — required for base script return-cargo unloading
+Relates to: Mars Colony Inventory Manager (Inventory_Management.cs)
+
+
+INTENDED USE
+============
+
+The base Inventory Manager script watches for cargo blocks tagged [ContractReturn]
+on any construct connected to the [TradeDock] connector. When the trade ship docks
+and those tagged blocks are found, their contents are automatically unloaded into
+the appropriate base storage containers (components to [Component], ores to [Ore],
+etc.) without any player interaction.
+
+The problem this feature solves is that the same cargo containers used to carry
+outbound contract goods should also carry inbound payment, reward, or return items
+— but you do not want the base script treating outbound cargo as return cargo, and
+you do not want to manually rename blocks mid-mission.
+
+The solution is to have the trade ship script manage the [ContractReturn] tag on
+its own cargo blocks automatically based on connector state:
+
+  On departure  — strip [ContractReturn] from all cargo so outbound containers
+                  are clean and the base script ignores them on the next dock.
+
+  On return     — add [ContractReturn] to all cargo so the base script knows to
+                  unload everything when the ship reconnects to [TradeDock].
+
+This makes the full trade loop completely automatic:
+
+  1. Ship docks at base.
+  2. Base script reads [Contracts] LCDs and loads contract items onto ship.
+  3. Ship departs — trade ship script strips [ContractReturn] from all cargo.
+  4. Ship travels to station, delivers goods, receives payment into cargo.
+  5. Ship returns and docks at base.
+  6. Trade ship script adds [ContractReturn] to all cargo on dock.
+  7. Base script detects [ContractReturn] blocks and unloads payment to storage.
+  8. Cycle repeats.
+
+No manual block renaming required at any point in the loop.
+
+
+SUGGESTED IMPLEMENTATION
+=========================
+
+State variable needed:
+
+    bool wasConnected = false;   // tracks previous connector state
+
+
+In your Main() function, watch the connector each tick:
+
+    IMyShipConnector dock = GridTerminalSystem.GetBlockWithName("LOG - Connector - Trade Dock [TradeDock]") as IMyShipConnector;
+    bool isConnected = dock != null && dock.Status == MyShipConnectorStatus.Connected;
+
+    if (wasConnected && !isConnected)
+    {
+        // Ship just departed — strip [ContractReturn] from all cargo.
+        OnDeparture();
+    }
+    else if (!wasConnected && isConnected)
+    {
+        // Ship just docked — add [ContractReturn] to all cargo.
+        OnDocked();
+    }
+
+    wasConnected = isConnected;
+
+
+The two event functions:
+
+    void OnDeparture()
+    {
+        List<IMyCargoContainer> cargo = new List<IMyCargoContainer>();
+        GridTerminalSystem.GetBlocksOfType<IMyCargoContainer>(cargo);
+
+        foreach (IMyCargoContainer c in cargo)
+        {
+            if (c.CustomName.Contains("[ContractReturn]"))
+                c.CustomName = c.CustomName.Replace("[ContractReturn]", "").Trim();
+        }
+
+        Echo("Departed — [ContractReturn] tags cleared.");
+    }
+
+    void OnDocked()
+    {
+        List<IMyCargoContainer> cargo = new List<IMyCargoContainer>();
+        GridTerminalSystem.GetBlocksOfType<IMyCargoContainer>(cargo);
+
+        foreach (IMyCargoContainer c in cargo)
+        {
+            if (!c.CustomName.Contains("[ContractReturn]"))
+                c.CustomName = c.CustomName + " [ContractReturn]";
+        }
+
+        Echo("Docked — [ContractReturn] tags applied. Base will unload on next cycle.");
+    }
+
+
+NOTES AND CAVEATS
+=================
+
+- The trade ship script must run on the ship's own programmable block, not the
+  base programmable block. A script can only rename blocks on its own construct.
+
+- If your ship has cargo that should NEVER be unloaded by the base (e.g. a
+  personal locker, spare tools, ship components), tag those blocks [DoNotTrack].
+  The base Inventory Manager skips all [DoNotTrack] blocks during unloading, and
+  you should filter them out in OnDocked() as well:
+
+      if (!c.CustomName.Contains("[DoNotTrack]") && !c.CustomName.Contains("[ContractReturn]"))
+          c.CustomName = c.CustomName + " [ContractReturn]";
+
+- If the ship script is not running (script stopped, PB damaged), the tags will
+  not be managed automatically. As a fallback, the player can manually add or
+  remove [ContractReturn] from cargo block names in the terminal.
+
+- The base script checks for [ContractReturn] blocks once per dock cycle. There
+  is no need to call any command on the base PB — the tag presence alone triggers
+  the unload on the next ManageContractsAndTradeShip() pass (~3 second cadence).
+
+- This tag management approach is intentionally simple. It does not require any
+  inter-grid communication, antenna messaging, or shared data storage between the
+  ship and base scripts. Block names are the only handshake needed.

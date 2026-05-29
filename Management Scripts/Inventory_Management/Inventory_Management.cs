@@ -46,6 +46,12 @@ const int PRODUCTION_INTERVAL_TICKS = 50;     // about every 5 seconds
 const int LCD_INTERVAL_TICKS = 20;
 const int RELAY_COOLDOWN_TICKS = 3000;        // about 5 minutes at Update10
 
+// Assembler input inventory fill fraction at which inputs are drained back to cargo
+// even while the assembler is still running. At or above this level the script treats
+// the input as dangerously full and evacuates it so the assembler can keep pulling
+// components for future jobs. Also drains whenever the assembler is idle.
+const double ASSEMBLER_INPUT_DRAIN_THRESHOLD = 0.90;
+
 // ============================================================
 // BLOCK TAGS / GROUP NAMES
 // ============================================================
@@ -80,6 +86,8 @@ const string TAG_STAGED = "[Staged]";
 
 const string TAG_CONTRACT_LCD = "[Contracts]";
 const string TAG_CONTRACT_STATUS_LCD = "[ContractStatus]";
+const string TAG_CONTRACT_HISTORY_LCD = "[ContractHistory]";
+const string TAG_CONTRACT_RETURN = "[ContractReturn]";  // cargo on trade ship — unloaded on return dock
 const string TAG_LOADOUT_LCD = "[Loadout]";
 const string TAG_LOADOUT_STATUS_LCD = "[LoadoutStatus]";
 const string TAG_STATUS_LCD = "[InventoryStatus]";
@@ -112,6 +120,10 @@ const double TRADE_SHIP_FULL_THRESHOLD = 0.95;
 const double LOADOUT_SHIP_FULL_THRESHOLD = 0.95;
 const bool AUTO_CLEAR_CONTRACTS_ON_DEPARTURE = true;
 const bool REQUIRE_READY_BEFORE_CLEARING_CONTRACTS = true;
+
+// Rough items-per-second throughput used to estimate contract completion time.
+// Adjust based on your assembler count and upgrade level.
+const double ASSEMBLER_THROUGHPUT_PER_SECOND = 2.0;
 
 // Fill target for loadout ship gas tanks when using loadout dock.
 const double DEFAULT_LOADOUT_HYDROGEN_FILL = 0.80;
@@ -322,6 +334,17 @@ string lastAlert = "None";
 // ---- Combat Mode State ----
 bool combatMode = false;
 
+// ---- Multi-contract state ----
+// Each entry is one named contract: name → (item → quantity).
+// Contracts are parsed from all LCDs tagged [Contracts] or [Contract:Name].
+// A plain [Contracts] LCD uses "Default" as the contract name.
+List<ContractEntry> activeContracts = new List<ContractEntry>();
+List<string> contractHistory = new List<string>();  // archived completed contracts for [ContractHistory] LCD
+
+// Tracks what was loaded onto the ship this dock session per contract.
+// Key = contractName, Value = (item → loaded amount).
+Dictionary<string, Dictionary<string, double>> contractLoaded = new Dictionary<string, Dictionary<string, double>>();
+
 // ---- LCD-configured production overrides ----
 // Populated by ParseProductionSettingsLCD each scan cycle.
 // Format on the [ProductionSettings] LCD: Item Name = min/max
@@ -332,9 +355,75 @@ Dictionary<string, double> lcdProductionMaxes = new Dictionary<string, double>()
 
 Dictionary<string, double> totals = new Dictionary<string, double>();
 Dictionary<string, double> baseTotals = new Dictionary<string, double>();
-Dictionary<string, double> contractRequests = new Dictionary<string, double>();
 Dictionary<string, double> loadoutRequests = new Dictionary<string, double>();
 Dictionary<string, int> relayCooldowns = new Dictionary<string, int>();
+
+// ============================================================
+// BLUEPRINT DICTIONARY
+// Declared as a class-level field so it is allocated once at startup.
+// BlueprintForItem() looks up entries here instead of rebuilding on every call.
+// ============================================================
+readonly Dictionary<string, string> BLUEPRINTS = new Dictionary<string, string>()
+{
+    // Components
+    {"Steel Plate",                    "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
+    {"Interior Plate",                 "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
+    {"Construction Component",         "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
+    {"Motor",                          "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
+    {"Computer",                       "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
+    {"Large Steel Tube",               "MyObjectBuilder_BlueprintDefinition/LargeTube"},
+    {"Small Steel Tube",               "MyObjectBuilder_BlueprintDefinition/SmallTube"},
+    {"Metal Grid",                     "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
+    {"Power Cell",                     "MyObjectBuilder_BlueprintDefinition/PowerCell"},
+    {"Display",                        "MyObjectBuilder_BlueprintDefinition/Display"},
+    {"Medical Component",              "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
+    {"Radio-communication Component",  "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
+    {"Reactor Component",              "MyObjectBuilder_BlueprintDefinition/ReactorComponent"},
+    {"Thrust Component",               "MyObjectBuilder_BlueprintDefinition/ThrustComponent"},
+    {"Solar Cell",                     "MyObjectBuilder_BlueprintDefinition/SolarCell"},
+    {"Bulletproof Glass",              "MyObjectBuilder_BlueprintDefinition/BulletproofGlass"},
+    {"Girder",                         "MyObjectBuilder_BlueprintDefinition/Girder"},
+    // Gas
+    {"Hydrogen Bottle",                "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
+    {"Oxygen Bottle",                  "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
+    // Ammo
+    {"5.56x45mm NATO magazine",        "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
+    {"Missile 200mm",                  "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
+    {"Autocannon Magazine",            "MyObjectBuilder_BlueprintDefinition/AutocannonClip"},
+    {"Assault Cannon Shell",           "MyObjectBuilder_BlueprintDefinition/MediumCalibreAmmo"},
+    {"Artillery Shell",                "MyObjectBuilder_BlueprintDefinition/LargeCalibreAmmo"},
+    {"Large Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/LargeRailgunAmmo"},
+    {"Small Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/SmallRailgunAmmo"},
+    {"S-10 Pistol Magazine",           "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolMagazine"},
+    {"MR-30E Pistol Magazine",         "MyObjectBuilder_BlueprintDefinition/FullAutoPistolMagazine"},
+    // Tools — tiers 1-4
+    {"Welder",                         "MyObjectBuilder_BlueprintDefinition/Welder"},
+    {"Enhanced Welder",                "MyObjectBuilder_BlueprintDefinition/Welder2"},
+    {"Proficient Welder",              "MyObjectBuilder_BlueprintDefinition/Welder3"},
+    {"Elite Welder",                   "MyObjectBuilder_BlueprintDefinition/Welder4"},
+    {"Grinder",                        "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
+    {"Enhanced Grinder",               "MyObjectBuilder_BlueprintDefinition/AngleGrinder2"},
+    {"Proficient Grinder",             "MyObjectBuilder_BlueprintDefinition/AngleGrinder3"},
+    {"Elite Grinder",                  "MyObjectBuilder_BlueprintDefinition/AngleGrinder4"},
+    {"Hand Drill",                     "MyObjectBuilder_BlueprintDefinition/HandDrill"},
+    {"Enhanced Hand Drill",            "MyObjectBuilder_BlueprintDefinition/HandDrill2"},
+    {"Proficient Hand Drill",          "MyObjectBuilder_BlueprintDefinition/HandDrill3"},
+    {"Elite Hand Drill",               "MyObjectBuilder_BlueprintDefinition/HandDrill4"},
+    // Rifles
+    {"Automatic Rifle",                "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
+    {"Precise Automatic Rifle",        "MyObjectBuilder_BlueprintDefinition/PreciseAutomaticRifle"},
+    {"Rapid-Fire Automatic Rifle",     "MyObjectBuilder_BlueprintDefinition/RapidFireAutomaticRifle"},
+    {"Elite Automatic Rifle",          "MyObjectBuilder_BlueprintDefinition/UltimateAutomaticRifle"},
+    // Pistols
+    {"Semi-Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolItem"},
+    {"Enhanced Semi-Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedSemiAutoPistolItem"},
+    {"Elite Pistol",                   "MyObjectBuilder_BlueprintDefinition/ElitePistolItem"},
+    {"Full Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/FullAutoPistolItem"},
+    {"Enhanced Full Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedFullAutoPistolItem"},
+    // Launchers
+    {"Basic Rocket Launcher",          "MyObjectBuilder_BlueprintDefinition/BasicHandHeldLauncherItem"},
+    {"Rocket Launcher",                "MyObjectBuilder_BlueprintDefinition/AdvancedHandHeldLauncherItem"},
+};
 
 List<IMyTerminalBlock> inventoryBlocks = new List<IMyTerminalBlock>();
 List<IMyCargoContainer> cargoContainers = new List<IMyCargoContainer>();
@@ -345,6 +434,31 @@ List<IMyGasTank> gasTanks = new List<IMyGasTank>();
 List<IMyTextPanel> textPanels = new List<IMyTextPanel>();
 List<IMyLightingBlock> statusLights = new List<IMyLightingBlock>();
 List<IMyTerminalBlock> broadcastBlocks = new List<IMyTerminalBlock>();
+
+// ============================================================
+// CONTRACT DATA STRUCTURE
+// ============================================================
+
+// Represents one named trade contract with its item list and metadata.
+class ContractEntry
+{
+    public string Name;                          // e.g. "Alpha", "Default"
+    public Dictionary<string, double> Items;     // item → quantity requested
+    public string Deadline;                      // optional, parsed from # Deadline: comment
+    public string Notes;                         // optional, parsed from # Notes: comment
+    public bool Ready;                           // true when all items loaded onto ship
+    public bool Paused;                          // per-contract pause
+
+    public ContractEntry(string name)
+    {
+        Name    = name;
+        Items   = new Dictionary<string, double>();
+        Deadline = "";
+        Notes    = "";
+        Ready    = false;
+        Paused   = false;
+    }
+}
 
 Program()
 {
@@ -368,7 +482,7 @@ void Main(string argument, UpdateType updateSource)
     {
         ScanBlocks();
         ScanInventories();
-        ParseContractLCD();
+        ParseContractLCDs();
         ParseLoadoutLCD();
         ParseProductionSettingsLCD();
     }
@@ -401,6 +515,11 @@ void Main(string argument, UpdateType updateSource)
     if (ENABLE_PRODUCTION_QUOTAS && tick % PRODUCTION_INTERVAL_TICKS == 3)
     {
         ManageProductionQuotas();
+    }
+
+    if (tick % SORT_INTERVAL_TICKS == 17)
+    {
+        DrainAssemblerInputs();
     }
 
     if (ENABLE_SURPLUS_DISASSEMBLY && tick % PRODUCTION_INTERVAL_TICKS == 13)
@@ -450,6 +569,32 @@ void HandleCommand(string cmd)
         contractsPaused = false;
         currentStatus = "Contracts resumed";
     }
+    else if (cmd.StartsWith("pause contract:"))
+    {
+        // Pause a single named contract: "pause contract:Alpha"
+        string name = cmd.Substring(15).Trim();
+        SetContractPause(name, true);
+    }
+    else if (cmd.StartsWith("resume contract:"))
+    {
+        string name = cmd.Substring(16).Trim();
+        SetContractPause(name, false);
+    }
+    else if (cmd.StartsWith("complete contract:"))
+    {
+        // Manually mark a named contract as complete and archive it.
+        string name = cmd.Substring(18).Trim();
+        CompleteContract(name);
+    }
+    else if (cmd == "complete contracts")
+    {
+        // Mark all ready contracts as complete.
+        for (int ci = 0; ci < activeContracts.Count; ci++)
+        {
+            if (activeContracts[ci].Ready)
+                CompleteContract(activeContracts[ci].Name);
+        }
+    }
     else if (cmd == "pause loadout")
     {
         loadoutPaused = true;
@@ -462,8 +607,8 @@ void HandleCommand(string cmd)
     }
     else if (cmd == "reset contracts")
     {
-        if (!DRY_RUN_MODE) ClearContractLCD();
-        contractRequests.Clear();
+        activeContracts.Clear();
+        contractLoaded.Clear();
         contractsReady = false;
         currentStatus = "Contracts reset";
     }
@@ -501,6 +646,45 @@ void HandleCommand(string cmd)
     {
         lastAlert = "Unknown command: " + cmd;
     }
+}
+
+void SetContractPause(string name, bool paused)
+{
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        if (activeContracts[ci].Name == name)
+        {
+            activeContracts[ci].Paused = paused;
+            currentStatus = "Contract '" + name + "' " + (paused ? "paused" : "resumed");
+            return;
+        }
+    }
+    lastAlert = "Contract not found: " + name;
+}
+
+void CompleteContract(string name)
+{
+    for (int ci = activeContracts.Count - 1; ci >= 0; ci--)
+    {
+        ContractEntry c = activeContracts[ci];
+        if (c.Name != name) continue;
+
+        string entry = "Contract '" + c.Name + "' — manually completed";
+        if (c.Deadline.Length > 0) entry += " | Deadline: " + c.Deadline;
+        contractHistory.Add(entry);
+        foreach (var item in c.Items)
+            contractHistory.Add("  " + item.Key + " x" + FormatAmount(item.Value));
+        contractHistory.Add("---");
+        while (contractHistory.Count > 30) contractHistory.RemoveAt(0);
+
+        ClearNamedContractLCD(c.Name);
+        activeContracts.RemoveAt(ci);
+        contractLoaded.Remove(name);
+        UpdateContractHistoryLCD();
+        currentStatus = "Contract '" + name + "' completed and archived";
+        return;
+    }
+    lastAlert = "Contract not found: " + name;
 }
 
 // ============================================================
@@ -742,12 +926,80 @@ string ItemDisplayName(MyInventoryItem item)
 // LCD PARSING
 // ============================================================
 
-void ParseContractLCD()
+// Scans all text panels for contract LCDs.
+// Supports two formats:
+//   [Contracts]          — treated as a single contract named "Default"
+//   [Contract:Name]      — named contract, e.g. [Contract:Alpha]
+//
+// LCD text format:
+//   Steel Plate = 5000
+//   Iron Ore = 20000
+//   # Deadline: Before Sunset
+//   # Notes: Priority delivery to Outpost 3
+//   # Lines starting with # or // are comments, except Deadline/Notes which are parsed.
+//
+// Multiple named contract LCDs can be active simultaneously.
+// Each is loaded independently to the trade ship in priority order (top to bottom within each).
+void ParseContractLCDs()
 {
-    contractRequests.Clear();
-    IMyTextPanel lcd = FindTextPanel(TAG_CONTRACT_LCD);
-    if (lcd == null) return;
-    ParseRequestText(lcd.GetText(), contractRequests);
+    activeContracts.Clear();
+
+    for (int i = 0; i < textPanels.Count; i++)
+    {
+        IMyTextPanel lcd = textPanels[i];
+        string n = lcd.CustomName;
+
+        string contractName = null;
+        if (n.Contains(TAG_CONTRACT_LCD))
+        {
+            contractName = "Default";
+        }
+        else
+        {
+            // Scan for [Contract:Name] pattern
+            int start = n.IndexOf("[Contract:");
+            if (start >= 0)
+            {
+                int end = n.IndexOf("]", start);
+                if (end > start)
+                    contractName = n.Substring(start + 10, end - start - 10).Trim();
+            }
+        }
+
+        if (contractName == null) continue;
+
+        ContractEntry entry = new ContractEntry(contractName);
+        string[] lines = lcd.GetText().Split('\n');
+        for (int j = 0; j < lines.Length; j++)
+        {
+            string line = lines[j].Trim();
+            if (line.Length == 0) continue;
+
+            // Parse metadata comments
+            if (line.StartsWith("# Deadline:") || line.StartsWith("// Deadline:"))
+            {
+                entry.Deadline = line.Substring(line.IndexOf(':') + 1).Trim();
+                continue;
+            }
+            if (line.StartsWith("# Notes:") || line.StartsWith("// Notes:"))
+            {
+                entry.Notes = line.Substring(line.IndexOf(':') + 1).Trim();
+                continue;
+            }
+            if (line.StartsWith("#") || line.StartsWith("//")) continue;
+
+            int eq = line.IndexOf('=');
+            if (eq < 0) continue;
+            string item = line.Substring(0, eq).Trim();
+            string qtyText = line.Substring(eq + 1).Trim().Replace(",", "");
+            double qty;
+            if (item.Length > 0 && double.TryParse(qtyText, out qty) && qty > 0)
+                entry.Items[item] = qty;
+        }
+
+        if (entry.Items.Count > 0)
+            activeContracts.Add(entry);
+    }
 }
 
 void ParseLoadoutLCD()
@@ -894,14 +1146,30 @@ string TagForItem(string itemName)
     return TAG_COMPONENT;
 }
 
+// Returns the tagged cargo container with the most remaining free space.
+// Selecting by free space rather than list order means items naturally
+// distribute across all same-tagged containers as they fill up, and a
+// container carrying multiple tags (e.g. [Ammo][Tool][Weapons]) is eligible
+// for every item type it declares and will receive whichever type has the
+// most pressure at any given moment.
 IMyCargoContainer FindCargoWithTag(string tag)
 {
+    IMyCargoContainer best = null;
+    double bestFree = -1;
     for (int i = 0; i < cargoContainers.Count; i++)
     {
         IMyCargoContainer c = cargoContainers[i];
-        if (c.CustomName.Contains(tag) && !c.CustomName.Contains(TAG_OUTPUT_ONLY)) return c;
+        if (!c.CustomName.Contains(tag)) continue;
+        if (c.CustomName.Contains(TAG_OUTPUT_ONLY)) continue;
+        IMyInventory inv = c.GetInventory(0);
+        double free = (double)(inv.MaxVolume - inv.CurrentVolume);
+        if (free > bestFree)
+        {
+            bestFree = free;
+            best = c;
+        }
     }
-    return null;
+    return best;
 }
 
 // ============================================================
@@ -913,15 +1181,10 @@ void ManageContractsAndTradeShip()
     IMyShipConnector dock = FindConnector(TAG_TRADE_DOCK);
     bool connected = dock != null && dock.Status == MyShipConnectorStatus.Connected;
 
+    // On disconnect: archive completed contracts, clear ready state, optionally wipe LCDs.
     if (tradeWasConnected && !connected)
     {
-        if (AUTO_CLEAR_CONTRACTS_ON_DEPARTURE && (!REQUIRE_READY_BEFORE_CLEARING_CONTRACTS || contractsReady))
-        {
-            if (!DRY_RUN_MODE) ClearContractLCD();
-            contractRequests.Clear();
-            contractsReady = false;
-            Broadcast("Trade ship departed. Contract LCD reset.");
-        }
+        HandleTradeShipDeparture();
     }
     tradeWasConnected = connected;
 
@@ -932,10 +1195,11 @@ void ManageContractsAndTradeShip()
     }
     if (!connected)
     {
+        contractLoaded.Clear();
         currentStatus = "Awaiting trade ship";
         return;
     }
-    if (contractRequests.Count == 0)
+    if (activeContracts.Count == 0)
     {
         currentStatus = "No active contracts";
         return;
@@ -944,55 +1208,205 @@ void ManageContractsAndTradeShip()
     List<IMyTerminalBlock> shipBlocks = GetConnectedInventoryBlocks(dock, TAG_TRADE_SHIP);
     if (shipBlocks.Count == 0)
     {
-        currentStatus = "Trade ship connected, no [TradeShip] cargo found";
+        currentStatus = "Trade ship connected — no [TradeShip] cargo found";
         return;
     }
 
-    bool allLoaded = true;
-    foreach (var req in contractRequests)
+    // On fresh dock, also unload any [ContractReturn] blocks (payment/reward items from last mission).
+    UnloadContractReturn(dock);
+
+    bool anyIncomplete = false;
+
+    // Process each contract in order. Each gets a fair share of the ship's remaining space.
+    for (int ci = 0; ci < activeContracts.Count; ci++)
     {
-        double loaded = CountInBlocks(shipBlocks, req.Key);
-        double needed = req.Value - loaded;
-        if (needed <= 0) continue;
-        allLoaded = false;
+        ContractEntry contract = activeContracts[ci];
+        if (contract.Paused) continue;
 
-        if (GetAverageCargoFill(shipBlocks) >= TRADE_SHIP_FULL_THRESHOLD)
+        if (!contractLoaded.ContainsKey(contract.Name))
+            contractLoaded[contract.Name] = new Dictionary<string, double>();
+
+        bool contractComplete = true;
+
+        foreach (var req in contract.Items)
         {
-            lastAlert = "Trade ship full before contracts complete";
-            Broadcast(lastAlert);
-            break;
+            string item = req.Key;
+            double needed = req.Value;
+
+            double loaded = CountInBlocks(shipBlocks, item);
+            double remaining = needed - loaded;
+
+            // Track loaded amount for status display.
+            contractLoaded[contract.Name][item] = loaded;
+
+            if (remaining <= 0) continue;
+
+            contractComplete = false;
+            anyIncomplete = true;
+
+            if (GetAverageCargoFill(shipBlocks) >= TRADE_SHIP_FULL_THRESHOLD)
+            {
+                lastAlert = "Trade ship full — contracts incomplete";
+                Broadcast(lastAlert);
+                goto doneLoading;
+            }
+
+            double available = AvailableForContract(item);
+            if (available <= 0)
+            {
+                // Not enough in stock — queue production if it's a producible item.
+                QueueProduction(item, remaining);
+                continue;
+            }
+
+            MoveItemToBlocks(item, Math.Min(remaining, available), shipBlocks, false);
         }
 
-        double available = AvailableForUse(req.Key);
-        if (available <= 0)
-        {
-            QueueProduction(req.Key, needed);
-            continue;
-        }
-
-        double moveAmount = Math.Min(needed, available);
-        MoveItemToBlocks(req.Key, moveAmount, shipBlocks, true);
+        contract.Ready = contractComplete;
     }
 
-    if (allLoaded)
+    doneLoading:
+    bool allReady = !anyIncomplete && activeContracts.Count > 0;
+    contractsReady = allReady;
+    if (allReady)
     {
-        contractsReady = true;
-        currentStatus = "Trade contracts loaded";
-        Broadcast("Trade ship loaded. Acquisition contracts ready for delivery.");
+        currentStatus = "All contracts loaded — ready for departure";
+        Broadcast("Trade ship loaded. All contracts fulfilled and ready.");
     }
     else
     {
-        contractsReady = false;
-        currentStatus = "Fulfilling trade contracts";
+        currentStatus = "Loading contracts (" + GetContractProgressSummary() + ")";
     }
 }
 
-void ClearContractLCD()
+// Calculates how much of an item is available for contract loading:
+// base stock minus reserves minus what's already committed to other active contracts.
+double AvailableForContract(string itemName)
 {
-    IMyTextPanel lcd = FindTextPanel(TAG_CONTRACT_LCD);
-    if (lcd == null) return;
-    lcd.ContentType = ContentType.TEXT_AND_IMAGE;
-    lcd.WriteText("# Enter acquisition contracts below\n# Format: Item Name = Quantity\n\nSteel Plate = \nConstruction Component = \nMotor = \nComputer = \n");
+    double have = GetTotal(baseTotals, itemName);
+    double reserve = RESERVES.ContainsKey(itemName) ? RESERVES[itemName] : 0;
+
+    // Subtract quantities committed to other active contracts for this item.
+    double committed = 0;
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        ContractEntry c = activeContracts[ci];
+        if (!c.Items.ContainsKey(itemName)) continue;
+        // Only count other contracts' committed amounts, not the current one being evaluated.
+        // We use the loaded tracking to know what's already on the ship.
+        if (contractLoaded.ContainsKey(c.Name) && contractLoaded[c.Name].ContainsKey(itemName))
+            committed += contractLoaded[c.Name][itemName];
+    }
+
+    return Math.Max(0, have - reserve - committed);
+}
+
+// Returns a short progress string like "2/3 contracts, 74% loaded" for the status LCD.
+string GetContractProgressSummary()
+{
+    int readyCount = 0;
+    double totalNeeded = 0;
+    double totalLoaded = 0;
+
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        ContractEntry c = activeContracts[ci];
+        if (c.Ready) readyCount++;
+        foreach (var req in c.Items)
+        {
+            totalNeeded += req.Value;
+            if (contractLoaded.ContainsKey(c.Name) && contractLoaded[c.Name].ContainsKey(req.Key))
+                totalLoaded += contractLoaded[c.Name][req.Key];
+        }
+    }
+
+    int pct = totalNeeded > 0 ? (int)(totalLoaded / totalNeeded * 100) : 0;
+    return readyCount + "/" + activeContracts.Count + " contracts, " + pct + "% loaded";
+}
+
+// When the trade ship undocks, archive completed contracts and optionally clear their LCDs.
+void HandleTradeShipDeparture()
+{
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        ContractEntry c = activeContracts[ci];
+        if (!c.Ready) continue;
+
+        // Archive to history.
+        string timestamp = "Contract '" + c.Name + "' — departed";
+        if (c.Deadline.Length > 0) timestamp += " | Deadline: " + c.Deadline;
+        contractHistory.Add(timestamp);
+        foreach (var item in c.Items)
+            contractHistory.Add("  " + item.Key + " x" + FormatAmount(item.Value));
+        contractHistory.Add("---");
+
+        // Trim history to last 30 entries.
+        while (contractHistory.Count > 30)
+            contractHistory.RemoveAt(0);
+
+        UpdateContractHistoryLCD();
+    }
+
+    if (AUTO_CLEAR_CONTRACTS_ON_DEPARTURE)
+    {
+        // Only clear LCDs for contracts that were fully ready.
+        // Incomplete contracts are left so you can finish them next trip.
+        bool anyClear = false;
+        for (int ci = 0; ci < activeContracts.Count; ci++)
+        {
+            if (!activeContracts[ci].Ready) continue;
+            if (!REQUIRE_READY_BEFORE_CLEARING_CONTRACTS || activeContracts[ci].Ready)
+            {
+                ClearNamedContractLCD(activeContracts[ci].Name);
+                anyClear = true;
+            }
+        }
+        if (anyClear)
+            Broadcast("Trade ship departed. Completed contract LCDs reset.");
+    }
+
+    contractLoaded.Clear();
+    contractsReady = false;
+}
+
+// Unloads items from [ContractReturn]-tagged blocks on the connected construct into base storage.
+// This handles incoming payment, reward items, or return cargo from the last mission.
+void UnloadContractReturn(IMyShipConnector dock)
+{
+    if (DRY_RUN_MODE) return;
+    List<IMyTerminalBlock> returnBlocks = GetConnectedInventoryBlocks(dock, TAG_CONTRACT_RETURN);
+    if (returnBlocks.Count == 0) return;
+
+    for (int i = 0; i < returnBlocks.Count; i++)
+    {
+        IMyTerminalBlock b = returnBlocks[i];
+        for (int invIndex = 0; invIndex < b.InventoryCount; invIndex++)
+        {
+            IMyInventory inv = b.GetInventory(invIndex);
+            List<MyInventoryItem> items = new List<MyInventoryItem>();
+            inv.GetItems(items);
+            for (int j = items.Count - 1; j >= 0; j--)
+            {
+                IMyCargoContainer target = FindContainerForItem(ItemDisplayName(items[j]), b);
+                if (target != null) inv.TransferItemTo(target.GetInventory(0), j);
+            }
+        }
+    }
+}
+
+// Clears the LCD for the named contract and writes back the blank template.
+void ClearNamedContractLCD(string contractName)
+{
+    for (int i = 0; i < textPanels.Count; i++)
+    {
+        IMyTextPanel lcd = textPanels[i];
+        string n = lcd.CustomName;
+        bool isDefault = contractName == "Default" && n.Contains(TAG_CONTRACT_LCD);
+        bool isNamed   = n.Contains("[Contract:" + contractName + "]");
+        if (!isDefault && !isNamed) continue;
+        if (!DRY_RUN_MODE)
+            lcd.WriteText("# Contract: " + contractName + "\n# Deadline: \n# Notes: \n# Format: Item Name = Quantity\n\n");
+    }
 }
 
 // ============================================================
@@ -1048,6 +1462,19 @@ void ManageSalvageDock()
 {
     IMyShipConnector dock = FindConnector(TAG_SALVAGE_DOCK);
     if (dock == null || dock.Status != MyShipConnectorStatus.Connected) return;
+
+    // Multi-dock guard: if the connected construct has [TradeShip] or [LoadoutShip]
+    // cargo then this connector is currently serving another dock role and the
+    // salvage unload must not run. This protects setups where one connector
+    // carries multiple dock tags, and also catches accidental docking of a trade
+    // or loadout ship to a salvage connector.
+    List<IMyTerminalBlock> tradeCheck = GetConnectedInventoryBlocks(dock, TAG_TRADE_SHIP);
+    List<IMyTerminalBlock> loadoutCheck = GetConnectedInventoryBlocks(dock, TAG_LOADOUT_SHIP);
+    if (tradeCheck.Count > 0 || loadoutCheck.Count > 0)
+    {
+        currentStatus = "Salvage dock: trade/loadout ship detected — unload skipped";
+        return;
+    }
 
     List<IMyTerminalBlock> salvageBlocks = GetConnectedInventoryBlocks(dock, "");
     if (!DRY_RUN_MODE)
@@ -1115,10 +1542,20 @@ List<string> GetDedicatedOres(IMyRefinery r)
 }
 
 // Dedicated refinery: picks the most-needed ore from its allowed set and loads it.
-// Does NOT unload; it processes whatever is already there + new ore as needed.
+// Also ejects any ore that is not in this refinery's allowed set (e.g. manually dumped
+// wrong ore) so it doesn't clog the input or get processed by the wrong machine.
 void ManageDedicatedRefinery(IMyRefinery r, List<string> allowedOres)
 {
     string bestOre = GetHighestNeedOre(allowedOres);
+
+    if (!DRY_RUN_MODE)
+    {
+        // Always clean out any ore that doesn't belong in this refinery first,
+        // regardless of whether we have a best ore to load. This catches manual
+        // mis-dumps and wrong-ore contamination from conveyors.
+        UnloadRefineryInputExceptAllowed(r, allowedOres);
+    }
+
     if (bestOre == null) return;
 
     double threshold = ORE_LOW_THRESHOLDS.ContainsKey(bestOre) ? ORE_LOW_THRESHOLDS[bestOre] : 0;
@@ -1194,6 +1631,22 @@ void UnloadRefineryInputExcept(IMyRefinery r, string keepOreName)
     }
 }
 
+// Dedicated-refinery variant: ejects any ore NOT in the allowed set back to ore storage.
+// Used to clean up manually mis-dumped or conveyor-fed wrong ore types.
+void UnloadRefineryInputExceptAllowed(IMyRefinery r, List<string> allowedOres)
+{
+    IMyInventory input = r.GetInventory(0);
+    List<MyInventoryItem> items = new List<MyInventoryItem>();
+    input.GetItems(items);
+    IMyCargoContainer oreStorage = FindCargoWithTag(TAG_ORE);
+    for (int j = items.Count - 1; j >= 0; j--)
+    {
+        if (allowedOres.Contains(ItemDisplayName(items[j]))) continue;
+        if (oreStorage != null)
+            input.TransferItemTo(oreStorage.GetInventory(0), j);
+    }
+}
+
 IMyRefinery FindRefinery(string tag)
 {
     for (int i = 0; i < refineries.Count; i++)
@@ -1249,6 +1702,62 @@ void DecayCooldowns()
 }
 
 // ============================================================
+// ASSEMBLER INPUT DRAINING
+// ============================================================
+
+// Drains the input inventory (slot 0) of each assembler back to appropriate cargo when:
+//   (a) the assembler is idle — clears leftover ingredients from a cancelled or
+//       completed job so the next job can pull fresh components cleanly, or
+//   (b) the input is >= ASSEMBLER_INPUT_DRAIN_THRESHOLD full — prevents the input
+//       from becoming so packed that the assembler can no longer pull components
+//       for the next queued item.
+// Items are routed through FindContainerForItem so they land in the correct tagged
+// cargo container (components → [Component], ingots → [Ingot], etc.).
+// Assemblers tagged [DoNotTrack] are skipped entirely.
+void DrainAssemblerInputs()
+{
+    if (DRY_RUN_MODE)
+    {
+        // In dry-run mode, report what would be drained without moving anything.
+        for (int i = 0; i < assemblers.Count; i++)
+        {
+            IMyAssembler a = assemblers[i];
+            if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+            IMyInventory input = a.GetInventory(0);
+            bool idle = !a.IsProducing && a.IsQueueEmpty;
+            double fill = (double)input.CurrentVolume / (double)input.MaxVolume;
+            if (idle || fill >= ASSEMBLER_INPUT_DRAIN_THRESHOLD)
+                Echo("[DryRun] Would drain assembler input: " + a.CustomName +
+                     " (idle=" + idle + ", fill=" + (fill * 100).ToString("0") + "%)");
+        }
+        return;
+    }
+
+    for (int i = 0; i < assemblers.Count; i++)
+    {
+        IMyAssembler a = assemblers[i];
+        if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+
+        IMyInventory input = a.GetInventory(0);
+        bool idle = !a.IsProducing && a.IsQueueEmpty;
+        double fill = (double)input.CurrentVolume / (double)input.MaxVolume;
+
+        if (!idle && fill < ASSEMBLER_INPUT_DRAIN_THRESHOLD) continue;
+
+        List<MyInventoryItem> items = new List<MyInventoryItem>();
+        input.GetItems(items);
+
+        for (int j = items.Count - 1; j >= 0; j--)
+        {
+            string name = ItemDisplayName(items[j]);
+            IMyCargoContainer target = FindContainerForItem(name, a);
+            if (target == null) continue;
+            input.TransferItemTo(target.GetInventory(0), j);
+        }
+    }
+}
+
+// ============================================================
 // PRODUCTION / DISASSEMBLY
 // ============================================================
 
@@ -1271,10 +1780,14 @@ void ManageProductionQuotas()
         if (have < quota) QueueProduction(item, quota - have);
     }
 
-    foreach (var c in contractRequests)
+    foreach (var c in activeContracts)
     {
-        double available = AvailableForUse(c.Key);
-        if (available < c.Value) QueueProduction(c.Key, c.Value - available);
+        if (c.Paused) continue;
+        foreach (var req in c.Items)
+        {
+            double available = AvailableForUse(req.Key);
+            if (available < req.Value) QueueProduction(req.Key, req.Value - available);
+        }
     }
 
     foreach (var l in loadoutRequests)
@@ -1302,7 +1815,7 @@ double GetEffectiveDisassemblyMax(string item)
 void QueueProduction(string itemName, double amount)
 {
     if (amount <= 0) return;
-    IMyAssembler assembler = GetPrimaryAssembler(false);
+    IMyAssembler assembler = GetBestAssemblerForProduction();
     if (assembler == null) return;
 
     string blueprint = BlueprintForItem(itemName);
@@ -1310,9 +1823,30 @@ void QueueProduction(string itemName, double amount)
 
     if (!DRY_RUN_MODE)
     {
+        // Check how much of this item is already queued across all assemblers to avoid
+        // stacking duplicate jobs every 5 seconds.
+        double alreadyQueued = 0;
+        MyDefinitionId blueprintId;
+        if (!MyDefinitionId.TryParse(blueprint, out blueprintId)) return;
+
+        for (int i = 0; i < assemblers.Count; i++)
+        {
+            if (assemblers[i].CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+            List<MyProductionItem> queue = new List<MyProductionItem>();
+            assemblers[i].GetQueue(queue);
+            for (int q = 0; q < queue.Count; q++)
+            {
+                if (queue[q].BlueprintId == blueprintId)
+                    alreadyQueued += (double)queue[q].Amount;
+            }
+        }
+
+        double stillNeeded = amount - alreadyQueued;
+        if (stillNeeded <= 0) return;
+
         try
         {
-            assembler.AddQueueItem(MyDefinitionId.Parse(blueprint), (VRage.MyFixedPoint)amount);
+            assembler.AddQueueItem(blueprintId, (VRage.MyFixedPoint)stillNeeded);
         }
         catch
         {
@@ -1357,82 +1891,53 @@ void ManageSurplusDisassembly()
     }
 }
 
-IMyAssembler GetPrimaryAssembler(bool disassembly)
+// Returns the assembler with the shortest current queue for production jobs,
+// distributing work across all available assemblers rather than funnelling
+// everything into the first one found.
+// Pass disassembly=true to find the best disassembler instead.
+IMyAssembler GetBestAssemblerForProduction(bool disassembly = false)
 {
+    IMyAssembler best = null;
+    int bestQueueDepth = int.MaxValue;
+
     for (int i = 0; i < assemblers.Count; i++)
     {
-        if (assemblers[i].CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
-        if (disassembly || assemblers[i].Mode != MyAssemblerMode.Disassembly) return assemblers[i];
+        IMyAssembler a = assemblers[i];
+        if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+
+        if (disassembly)
+        {
+            // For disassembly, pick any assembler capable of it.
+            if (a.Mode != MyAssemblerMode.Disassembly) continue;
+        }
+        else
+        {
+            // For production, skip assemblers currently locked in disassembly mode.
+            if (a.Mode == MyAssemblerMode.Disassembly) continue;
+        }
+
+        List<MyProductionItem> queue = new List<MyProductionItem>();
+        a.GetQueue(queue);
+        if (queue.Count < bestQueueDepth)
+        {
+            bestQueueDepth = queue.Count;
+            best = a;
+        }
     }
-    return null;
+    return best;
 }
 
+// Legacy name kept for disassembly callers.
+IMyAssembler GetPrimaryAssembler(bool disassembly)
+{
+    return GetBestAssemblerForProduction(disassembly);
+}
+
+// Blueprint lookup — dictionary is a class-level field (see BLUEPRINT DICTIONARY section)
+// so it is allocated once at startup rather than on every call.
 string BlueprintForItem(string itemName)
 {
-    // Blueprint IDs for vanilla SE. Adjust if running with mods.
-    Dictionary<string, string> bp = new Dictionary<string, string>()
-    {
-        // Components
-        {"Steel Plate",                    "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
-        {"Interior Plate",                 "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
-        {"Construction Component",         "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
-        {"Motor",                          "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
-        {"Computer",                       "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
-        {"Large Steel Tube",               "MyObjectBuilder_BlueprintDefinition/LargeTube"},
-        {"Small Steel Tube",               "MyObjectBuilder_BlueprintDefinition/SmallTube"},
-        {"Metal Grid",                     "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
-        {"Power Cell",                     "MyObjectBuilder_BlueprintDefinition/PowerCell"},
-        {"Display",                        "MyObjectBuilder_BlueprintDefinition/Display"},
-        {"Medical Component",              "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
-        {"Radio-communication Component",  "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
-        {"Reactor Component",              "MyObjectBuilder_BlueprintDefinition/ReactorComponent"},
-        {"Thrust Component",               "MyObjectBuilder_BlueprintDefinition/ThrustComponent"},
-        {"Solar Cell",                     "MyObjectBuilder_BlueprintDefinition/SolarCell"},
-        {"Bulletproof Glass",              "MyObjectBuilder_BlueprintDefinition/BulletproofGlass"},
-        {"Girder",                         "MyObjectBuilder_BlueprintDefinition/Girder"},
-        // Gas
-        {"Hydrogen Bottle",                "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
-        {"Oxygen Bottle",                  "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
-        // Ammo
-        {"5.56x45mm NATO magazine",        "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
-        {"Missile 200mm",                  "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
-        {"Autocannon Magazine",            "MyObjectBuilder_BlueprintDefinition/AutocannonClip"},
-        {"Assault Cannon Shell",           "MyObjectBuilder_BlueprintDefinition/MediumCalibreAmmo"},
-        {"Artillery Shell",                "MyObjectBuilder_BlueprintDefinition/LargeCalibreAmmo"},
-        {"Large Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/LargeRailgunAmmo"},
-        {"Small Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/SmallRailgunAmmo"},
-        {"S-10 Pistol Magazine",           "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolMagazine"},
-        {"MR-30E Pistol Magazine",         "MyObjectBuilder_BlueprintDefinition/FullAutoPistolMagazine"},
-        // Tools — tiers 1-4
-        {"Welder",                         "MyObjectBuilder_BlueprintDefinition/Welder"},
-        {"Enhanced Welder",                "MyObjectBuilder_BlueprintDefinition/Welder2"},
-        {"Proficient Welder",              "MyObjectBuilder_BlueprintDefinition/Welder3"},
-        {"Elite Welder",                   "MyObjectBuilder_BlueprintDefinition/Welder4"},
-        {"Grinder",                        "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
-        {"Enhanced Grinder",               "MyObjectBuilder_BlueprintDefinition/AngleGrinder2"},
-        {"Proficient Grinder",             "MyObjectBuilder_BlueprintDefinition/AngleGrinder3"},
-        {"Elite Grinder",                  "MyObjectBuilder_BlueprintDefinition/AngleGrinder4"},
-        {"Hand Drill",                     "MyObjectBuilder_BlueprintDefinition/HandDrill"},
-        {"Enhanced Hand Drill",            "MyObjectBuilder_BlueprintDefinition/HandDrill2"},
-        {"Proficient Hand Drill",          "MyObjectBuilder_BlueprintDefinition/HandDrill3"},
-        {"Elite Hand Drill",               "MyObjectBuilder_BlueprintDefinition/HandDrill4"},
-        // Rifles
-        {"Automatic Rifle",                "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
-        {"Precise Automatic Rifle",        "MyObjectBuilder_BlueprintDefinition/PreciseAutomaticRifle"},
-        {"Rapid-Fire Automatic Rifle",     "MyObjectBuilder_BlueprintDefinition/RapidFireAutomaticRifle"},
-        {"Elite Automatic Rifle",          "MyObjectBuilder_BlueprintDefinition/UltimateAutomaticRifle"},
-        // Pistols
-        {"Semi-Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolItem"},
-        {"Enhanced Semi-Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedSemiAutoPistolItem"},
-        {"Elite Pistol",                   "MyObjectBuilder_BlueprintDefinition/ElitePistolItem"},
-        {"Full Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/FullAutoPistolItem"},
-        {"Enhanced Full Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedFullAutoPistolItem"},
-        // Launchers
-        {"Basic Rocket Launcher",          "MyObjectBuilder_BlueprintDefinition/BasicHandHeldLauncherItem"},
-        {"Rocket Launcher",                "MyObjectBuilder_BlueprintDefinition/AdvancedHandHeldLauncherItem"},
-    };
-    if (bp.ContainsKey(itemName)) return bp[itemName];
-    return "";
+    return BLUEPRINTS.ContainsKey(itemName) ? BLUEPRINTS[itemName] : "";
 }
 
 // ============================================================
@@ -1562,13 +2067,25 @@ double GetAverageCargoFill(List<IMyTerminalBlock> blocks)
     return current / max;
 }
 
+// Returns how much of an item is freely available: base stock minus reserve minus
+// all quantities already committed across every active contract.
+// Used by loadout, production quotas, and reserve checks to avoid over-counting stock.
 double AvailableForUse(string itemName)
 {
     double have = GetTotal(baseTotals, itemName);
     double reserve = RESERVES.ContainsKey(itemName) ? RESERVES[itemName] : 0;
-    double assignedContracts = contractRequests.ContainsKey(itemName) ? 0 : 0;
-    double available = have - reserve - assignedContracts;
-    return Math.Max(0, available);
+
+    // Subtract the total contracted quantity across all active contracts so the
+    // loadout dock and assembler quotas don't treat contracted stock as free.
+    double contractCommitted = 0;
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        ContractEntry c = activeContracts[ci];
+        if (c.Items.ContainsKey(itemName))
+            contractCommitted += c.Items[itemName];
+    }
+
+    return Math.Max(0, have - reserve - contractCommitted);
 }
 
 double GetTotal(Dictionary<string, double> dict, string key)
@@ -1582,14 +2099,36 @@ double GetTotal(Dictionary<string, double> dict, string key)
 
 void CheckReserves()
 {
+    // Accumulate all low reserves instead of stopping at the first one.
+    // lastAlert shows the most critical item (furthest below reserve as a ratio),
+    // but the status LCD WriteStatusLCD shows the full picture per item.
+    string worstItem = null;
+    double worstRatio = double.MaxValue;
+
     foreach (var r in RESERVES)
     {
         double have = GetTotal(baseTotals, r.Key);
-        if (have < r.Value)
+        if (r.Value <= 0) continue;
+        double ratio = have / r.Value;
+        if (ratio < 1.0 && ratio < worstRatio)
         {
-            lastAlert = "Reserve low: " + r.Key + " " + FormatAmount(have) + " / " + FormatAmount(r.Value);
-            return;
+            worstRatio = ratio;
+            worstItem  = r.Key;
         }
+    }
+
+    if (worstItem != null)
+    {
+        double have    = GetTotal(baseTotals, worstItem);
+        double reserve = RESERVES[worstItem];
+        string severity = worstRatio <= 0.25 ? "CRITICAL" : "LOW";
+        lastAlert = "Reserve " + severity + ": " + worstItem +
+                    " " + FormatAmount(have) + " / " + FormatAmount(reserve);
+    }
+    else if (lastAlert.StartsWith("Reserve"))
+    {
+        // All reserves recovered — clear the stale reserve alert.
+        lastAlert = "None";
     }
 }
 
@@ -1648,21 +2187,109 @@ void WriteContractStatusLCD()
 {
     IMyTextPanel lcd = FindTextPanel(TAG_CONTRACT_STATUS_LCD);
     if (lcd == null) return;
+
     StringBuilder sb = new StringBuilder();
     sb.AppendLine("CONTRACT STATUS");
     sb.AppendLine("===============");
-    sb.AppendLine("Paused: " + (contractsPaused ? "YES" : "NO"));
-    sb.AppendLine("Ready: " + (contractsReady ? "YES" : "NO"));
+    sb.AppendLine("Paused:  " + (contractsPaused ? "YES" : "NO"));
+    sb.AppendLine("Overall: " + (contractsReady ? "READY" : "Loading"));
+
     IMyShipConnector dock = FindConnector(TAG_TRADE_DOCK);
-    sb.AppendLine("Trade Dock: " + ConnectorStatusText(dock));
+    sb.AppendLine("Dock:    " + ConnectorStatusText(dock));
     sb.AppendLine();
-    foreach (var req in contractRequests)
+
+    if (activeContracts.Count == 0)
     {
-        double have = GetTotal(baseTotals, req.Key);
-        double available = AvailableForUse(req.Key);
-        sb.AppendLine(req.Key + ": need " + FormatAmount(req.Value) + ", base " + FormatAmount(have) + ", avail " + FormatAmount(available));
+        sb.AppendLine("No active contracts.");
+        WritePanel(lcd, sb.ToString());
+        return;
     }
-    if (contractRequests.Count == 0) sb.AppendLine("No active contracts.");
+
+    // Per-contract breakdown with progress bars and ETA.
+    for (int ci = 0; ci < activeContracts.Count; ci++)
+    {
+        ContractEntry c = activeContracts[ci];
+        sb.AppendLine("--- " + c.Name + (c.Ready ? " [READY]" : c.Paused ? " [PAUSED]" : "") + " ---");
+        if (c.Deadline.Length > 0) sb.AppendLine("Deadline: " + c.Deadline);
+        if (c.Notes.Length > 0)    sb.AppendLine("Notes: " + c.Notes);
+
+        double totalNeeded = 0;
+        double totalLoaded = 0;
+        double totalDeficit = 0; // items that need to be produced (not yet in stock)
+
+        foreach (var req in c.Items)
+        {
+            string item   = req.Key;
+            double needed = req.Value;
+            double loaded = 0;
+            if (contractLoaded.ContainsKey(c.Name) && contractLoaded[c.Name].ContainsKey(item))
+                loaded = contractLoaded[c.Name][item];
+
+            double inStock   = GetTotal(baseTotals, item);
+            double available = AvailableForContract(item);
+            double remaining = needed - loaded;
+            double deficit   = Math.Max(0, needed - inStock);
+
+            totalNeeded  += needed;
+            totalLoaded  += loaded;
+            totalDeficit += deficit;
+
+            // Progress bar: 20 chars wide.
+            int barWidth = 20;
+            int filled   = (int)(loaded / needed * barWidth);
+            string bar   = "[" + new string('#', filled) + new string('.', barWidth - filled) + "]";
+
+            string itemStatus;
+            if (remaining <= 0)
+                itemStatus = "DONE";
+            else if (available <= 0 && deficit > 0)
+                itemStatus = "PRODUCING";
+            else
+                itemStatus = "Loading";
+
+            sb.AppendLine(item);
+            sb.AppendLine("  " + bar + " " + FormatAmount(loaded) + "/" + FormatAmount(needed) + " " + itemStatus);
+            if (deficit > 0)
+                sb.AppendLine("  Need to produce: " + FormatAmount(deficit));
+        }
+
+        // Contract-level progress and ETA.
+        int pct = totalNeeded > 0 ? (int)(totalLoaded / totalNeeded * 100) : 100;
+        sb.AppendLine("Progress: " + pct + "%");
+
+        if (totalDeficit > 0)
+        {
+            double etaSeconds = totalDeficit / ASSEMBLER_THROUGHPUT_PER_SECOND;
+            sb.AppendLine("Est. production: " + FormatDuration(etaSeconds));
+        }
+
+        sb.AppendLine();
+    }
+
+    WritePanel(lcd, sb.ToString());
+}
+
+// Formats a duration in seconds to a human-readable string like "1h 23m" or "45m 10s".
+string FormatDuration(double seconds)
+{
+    int h = (int)(seconds / 3600);
+    int m = (int)((seconds % 3600) / 60);
+    int s = (int)(seconds % 60);
+    if (h > 0) return h + "h " + m + "m";
+    if (m > 0) return m + "m " + s + "s";
+    return s + "s";
+}
+
+// Writes the contract history LCD with the last 30 archived contracts.
+void UpdateContractHistoryLCD()
+{
+    IMyTextPanel lcd = FindTextPanel(TAG_CONTRACT_HISTORY_LCD);
+    if (lcd == null) return;
+    StringBuilder sb = new StringBuilder();
+    sb.AppendLine("CONTRACT HISTORY");
+    sb.AppendLine("================");
+    for (int i = contractHistory.Count - 1; i >= 0; i--)
+        sb.AppendLine(contractHistory[i]);
     WritePanel(lcd, sb.ToString());
 }
 
