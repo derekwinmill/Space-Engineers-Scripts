@@ -4,37 +4,37 @@
 // Copy everything in this file into a Programmable Block.
 //
 // IMPORTANT:
-// This is an original inventory-management script designed around the discussed Mars colony logistics setup.
+// Mars Colony Inventory Manager.
 // Start with DRY_RUN_MODE = true. Check debug/status LCDs first, then set it to false when ready.
 
-// ============================================================
+// ====================
 // USER CONFIGURATION
-// ============================================================
+// ====================
 
 const bool DRY_RUN_MODE = true;
-const bool SPACE_MODE = false; // false = planetary/Mars priorities, true = space/asteroid priorities
+const bool SPACE_MODE = false; 
 
 const bool ENABLE_INVENTORY_SORTING = true;
 const bool ENABLE_RESERVE_MONITORING = true;
 const bool ENABLE_PRODUCTION_QUOTAS = true;
-const bool ENABLE_SURPLUS_DISASSEMBLY = true;
+const bool ENABLE_SURPLUS_DISASSEMBLY = false;
 const bool ENABLE_CONTRACT_SYSTEM = true;
-const bool ENABLE_TRADE_SHIP_LOADING = true;
-const bool ENABLE_LOADOUT_DOCK = true;
-const bool ENABLE_SALVAGE_DOCK = true;
+const bool ENABLE_TRADE_SHIP_LOADING = false;
+const bool ENABLE_LOADOUT_DOCK = false;
+const bool ENABLE_SALVAGE_DOCK = false;
 const bool ENABLE_REFINERY_ASSIGNMENT = true;
 const bool ENABLE_STATUS_LIGHTS = true;
 const bool ENABLE_BROADCASTS = true;
 const bool ENABLE_DEBUG_LCD = true;
 
-// ============================================================
+// ====================
 // CROSS-SCRIPT INTEGRATION
 // Tag the Programmable Blocks of the other scripts with these names
 // so this script can send commands back to them.
-// ============================================================
+// ====================
 
-const string DEFENSE_PB_NAME   = "Base Defense PB";   // CustomName of Base_Defense programmable block
-const string POWER_PB_NAME     = "Power Management PB"; // CustomName of Power_Management programmable block
+const string DEFENSE_PB_NAME   = "Base Defense PB";   
+const string POWER_PB_NAME     = "Power Management PB"; 
 
 // How much to multiply ammo quotas during combat. 2.0 = double normal quota.
 const double COMBAT_AMMO_MULTIPLIER = 2.0;
@@ -46,15 +46,11 @@ const int PRODUCTION_INTERVAL_TICKS = 50;     // about every 5 seconds
 const int LCD_INTERVAL_TICKS = 20;
 const int RELAY_COOLDOWN_TICKS = 3000;        // about 5 minutes at Update10
 
-// Assembler input inventory fill fraction at which inputs are drained back to cargo
-// even while the assembler is still running. At or above this level the script treats
-// the input as dangerously full and evacuates it so the assembler can keep pulling
-// components for future jobs. Also drains whenever the assembler is idle.
 const double ASSEMBLER_INPUT_DRAIN_THRESHOLD = 0.90;
 
-// ============================================================
+// ====================
 // BLOCK TAGS / GROUP NAMES
-// ============================================================
+// ====================
 
 const string TAG_ORE = "[Ore]";
 const string TAG_INGOT = "[Ingot]";
@@ -63,7 +59,8 @@ const string TAG_AMMO = "[Ammo]";
 const string TAG_TOOL = "[Tool]";
 const string TAG_WEAPONS = "[Weapons]";
 const string TAG_FUEL = "[Fuel]";
-const string TAG_FOOD = "[Food]";
+const string TAG_FOOD       = "[Food]";
+const string TAG_IRRIGATION = "[Irrigation]"; 
 const string TAG_EXPORT = "[Export]";
 const string TAG_IMPORT = "[Import]";
 const string TAG_RESERVE = "[Reserve]";
@@ -87,7 +84,7 @@ const string TAG_STAGED = "[Staged]";
 const string TAG_CONTRACT_LCD = "[Contracts]";
 const string TAG_CONTRACT_STATUS_LCD = "[ContractStatus]";
 const string TAG_CONTRACT_HISTORY_LCD = "[ContractHistory]";
-const string TAG_CONTRACT_RETURN = "[ContractReturn]";  // cargo on trade ship — unloaded on return dock
+const string TAG_CONTRACT_RETURN = "[ContractReturn]";  
 const string TAG_LOADOUT_LCD = "[Loadout]";
 const string TAG_LOADOUT_STATUS_LCD = "[LoadoutStatus]";
 const string TAG_STATUS_LCD = "[InventoryStatus]";
@@ -97,9 +94,9 @@ const string TAG_REFINERY_STATUS_LCD = "[RefineryStatus]";
 const string TAG_PRODUCTION_SETTINGS_LCD = "[ProductionSettings]";
 
 const string STATUS_LIGHT_GROUP_NAME = "InventoryStatusLights";
-const string BROADCAST_BLOCK_TAG = "[InventoryBroadcast]"; // antenna, beacon, or text panel name tag
+const string BROADCAST_BLOCK_TAG = "[InventoryBroadcast]"; 
 
-// Optional ore alert light groups and action relays. Relay blocks are triggered with ApplyAction("TriggerNow") if supported.
+
 const string IRON_ORE_LIGHT_GROUP = "IronOreStatusLights";
 const string NICKEL_ORE_LIGHT_GROUP = "NickelOreStatusLights";
 const string COBALT_ORE_LIGHT_GROUP = "CobaltOreStatusLights";
@@ -112,9 +109,9 @@ const string RELAY_COBALT_ORE_NEEDED = "[Relay:Co]";
 const string RELAY_SILICON_ORE_NEEDED = "[Relay:Si]";
 const string RELAY_MAGNESIUM_ORE_NEEDED = "[Relay:Mg]";
 
-// ============================================================
+// ====================
 // TRADE / LOADOUT SETTINGS
-// ============================================================
+// ====================
 
 const double TRADE_SHIP_FULL_THRESHOLD = 0.95;
 const double LOADOUT_SHIP_FULL_THRESHOLD = 0.95;
@@ -129,11 +126,11 @@ const double ASSEMBLER_THROUGHPUT_PER_SECOND = 2.0;
 const double DEFAULT_LOADOUT_HYDROGEN_FILL = 0.80;
 const double DEFAULT_LOADOUT_OXYGEN_FILL = 0.50;
 
-// ============================================================
+// ====================
 // RESERVE SETTINGS
 // Item names should match common Space Engineers display names used in inventories.
 // You can adjust these values freely.
-// ============================================================
+// ====================
 
 Dictionary<string, double> RESERVES = new Dictionary<string, double>()
 {
@@ -168,10 +165,10 @@ Dictionary<string, double> RESERVES = new Dictionary<string, double>()
     {"Seeds", 50},
 };
 
-// ============================================================
+// ====================
 // PRODUCTION QUOTAS
 // Minimum stock that assemblers should maintain.
-// ============================================================
+// ====================
 
 Dictionary<string, double> PRODUCTION_QUOTAS = new Dictionary<string, double>()
 {
@@ -198,7 +195,7 @@ Dictionary<string, double> PRODUCTION_QUOTAS = new Dictionary<string, double>()
     {"Autocannon Magazine", 100},
     {"Assault Cannon Shell", 50},
 
-    // Tools — tiers 1-4 (0 = do not produce by default; configure via [ProductionSettings] LCD)
+    // Tools — tiers 1-4
     {"Welder", 4},
     {"Enhanced Welder", 0},
     {"Proficient Welder", 0},
@@ -240,10 +237,10 @@ Dictionary<string, double> PRODUCTION_QUOTAS = new Dictionary<string, double>()
     {"Oxygen Bottle", 6},
 };
 
-// ============================================================
+// ====================
 // SURPLUS DISASSEMBLY MAXIMUMS
 // Only items listed here will be automatically disassembled above the max.
-// ============================================================
+// ====================
 
 Dictionary<string, double> DISASSEMBLY_MAX = new Dictionary<string, double>()
 {
@@ -266,7 +263,7 @@ Dictionary<string, double> DISASSEMBLY_MAX = new Dictionary<string, double>()
     {"Girder", 500},
 };
 
-// ============================================================
+// ====================
 // ORE REFINERY SETTINGS
 // Dedicated refineries: tag a refinery with one or more [Refine:X] tags.
 //   e.g. "Refinery [Refine:Fe]" processes only iron.
@@ -275,7 +272,7 @@ Dictionary<string, double> DISASSEMBLY_MAX = new Dictionary<string, double>()
 // General refineries: no [Refine:] tag — automatically processes whichever
 //   ore produces the ingot most below its reserve target. Unloads wrong ore
 //   before switching so it responds to base needs dynamically.
-// ============================================================
+// ====================
 
 Dictionary<string, double> ORE_LOW_THRESHOLDS = new Dictionary<string, double>()
 {
@@ -307,20 +304,20 @@ Dictionary<string, string> REFINERY_TAG_BY_ORE = new Dictionary<string, string>(
 // prioritise whichever ingot is furthest below its reserve target.
 Dictionary<string, string> ORE_TO_INGOT = new Dictionary<string, string>()
 {
-    {"Iron Ore",     "Iron Ingot"},
-    {"Nickel Ore",   "Nickel Ingot"},
-    {"Cobalt Ore",   "Cobalt Ingot"},
-    {"Silicon Ore",  "Silicon Wafer"},
+    {"Iron Ore", "Iron Ingot"},
+    {"Nickel Ore", "Nickel Ingot"},
+    {"Cobalt Ore", "Cobalt Ingot"},
+    {"Silicon Ore", "Silicon Wafer"},
     {"Magnesium Ore","Magnesium Powder"},
-    {"Silver Ore",   "Silver Ingot"},
-    {"Gold Ore",     "Gold Ingot"},
+    {"Silver Ore", "Silver Ingot"},
+    {"Gold Ore", "Gold Ingot"},
     {"Platinum Ore", "Platinum Ingot"},
-    {"Uranium Ore",  "Uranium Ingot"},
+    {"Uranium Ore", "Uranium Ingot"},
 };
 
-// ============================================================
+// ====================
 // INTERNAL STATE
-// ============================================================
+// ====================
 
 int tick = 0;
 bool contractsPaused = false;
@@ -339,7 +336,7 @@ bool combatMode = false;
 // Contracts are parsed from all LCDs tagged [Contracts] or [Contract:Name].
 // A plain [Contracts] LCD uses "Default" as the contract name.
 List<ContractEntry> activeContracts = new List<ContractEntry>();
-List<string> contractHistory = new List<string>();  // archived completed contracts for [ContractHistory] LCD
+List<string> contractHistory = new List<string>();  
 
 // Tracks what was loaded onto the ship this dock session per contract.
 // Key = contractName, Value = (item → loaded amount).
@@ -358,71 +355,76 @@ Dictionary<string, double> baseTotals = new Dictionary<string, double>();
 Dictionary<string, double> loadoutRequests = new Dictionary<string, double>();
 Dictionary<string, int> relayCooldowns = new Dictionary<string, int>();
 
-// ============================================================
+// Populated by FindContainerForItem when an item's correct tag container is missing
+// from the grid. Cleared and re-evaluated each LCD update cycle. Displayed on
+// [InventoryDebug] so the player knows which storage containers need to be tagged.
+HashSet<string> debugMissingTags = new HashSet<string>();
+
+// ====================
 // BLUEPRINT DICTIONARY
 // Declared as a class-level field so it is allocated once at startup.
 // BlueprintForItem() looks up entries here instead of rebuilding on every call.
-// ============================================================
+// ====================
 readonly Dictionary<string, string> BLUEPRINTS = new Dictionary<string, string>()
 {
     // Components
-    {"Steel Plate",                    "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
-    {"Interior Plate",                 "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
-    {"Construction Component",         "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
-    {"Motor",                          "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
-    {"Computer",                       "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
-    {"Large Steel Tube",               "MyObjectBuilder_BlueprintDefinition/LargeTube"},
-    {"Small Steel Tube",               "MyObjectBuilder_BlueprintDefinition/SmallTube"},
-    {"Metal Grid",                     "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
-    {"Power Cell",                     "MyObjectBuilder_BlueprintDefinition/PowerCell"},
-    {"Display",                        "MyObjectBuilder_BlueprintDefinition/Display"},
-    {"Medical Component",              "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
-    {"Radio-communication Component",  "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
-    {"Reactor Component",              "MyObjectBuilder_BlueprintDefinition/ReactorComponent"},
-    {"Thrust Component",               "MyObjectBuilder_BlueprintDefinition/ThrustComponent"},
-    {"Solar Cell",                     "MyObjectBuilder_BlueprintDefinition/SolarCell"},
-    {"Bulletproof Glass",              "MyObjectBuilder_BlueprintDefinition/BulletproofGlass"},
-    {"Girder",                         "MyObjectBuilder_BlueprintDefinition/Girder"},
+    {"Steel Plate", "MyObjectBuilder_BlueprintDefinition/SteelPlate"},
+    {"Interior Plate", "MyObjectBuilder_BlueprintDefinition/InteriorPlate"},
+    {"Construction Component", "MyObjectBuilder_BlueprintDefinition/ConstructionComponent"},
+    {"Motor", "MyObjectBuilder_BlueprintDefinition/MotorComponent"},
+    {"Computer", "MyObjectBuilder_BlueprintDefinition/ComputerComponent"},
+    {"Large Steel Tube", "MyObjectBuilder_BlueprintDefinition/LargeTube"},
+    {"Small Steel Tube", "MyObjectBuilder_BlueprintDefinition/SmallTube"},
+    {"Metal Grid", "MyObjectBuilder_BlueprintDefinition/MetalGrid"},
+    {"Power Cell", "MyObjectBuilder_BlueprintDefinition/PowerCell"},
+    {"Display", "MyObjectBuilder_BlueprintDefinition/Display"},
+    {"Medical Component", "MyObjectBuilder_BlueprintDefinition/MedicalComponent"},
+    {"Radio-communication Component", "MyObjectBuilder_BlueprintDefinition/RadioCommunicationComponent"},
+    {"Reactor Component", "MyObjectBuilder_BlueprintDefinition/ReactorComponent"},
+    {"Thrust Component", "MyObjectBuilder_BlueprintDefinition/ThrustComponent"},
+    {"Solar Cell", "MyObjectBuilder_BlueprintDefinition/SolarCell"},
+    {"Bulletproof Glass", "MyObjectBuilder_BlueprintDefinition/BulletproofGlass"},
+    {"Girder", "MyObjectBuilder_BlueprintDefinition/Girder"},
     // Gas
-    {"Hydrogen Bottle",                "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
-    {"Oxygen Bottle",                  "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
+    {"Hydrogen Bottle", "MyObjectBuilder_BlueprintDefinition/HydrogenBottle"},
+    {"Oxygen Bottle", "MyObjectBuilder_BlueprintDefinition/OxygenBottle"},
     // Ammo
-    {"5.56x45mm NATO magazine",        "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
-    {"Missile 200mm",                  "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
-    {"Autocannon Magazine",            "MyObjectBuilder_BlueprintDefinition/AutocannonClip"},
-    {"Assault Cannon Shell",           "MyObjectBuilder_BlueprintDefinition/MediumCalibreAmmo"},
-    {"Artillery Shell",                "MyObjectBuilder_BlueprintDefinition/LargeCalibreAmmo"},
-    {"Large Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/LargeRailgunAmmo"},
-    {"Small Railgun Sabot",            "MyObjectBuilder_BlueprintDefinition/SmallRailgunAmmo"},
-    {"S-10 Pistol Magazine",           "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolMagazine"},
-    {"MR-30E Pistol Magazine",         "MyObjectBuilder_BlueprintDefinition/FullAutoPistolMagazine"},
+    {"5.56x45mm NATO magazine", "MyObjectBuilder_BlueprintDefinition/NATO_5p56x45mmMagazine"},
+    {"Missile 200mm", "MyObjectBuilder_BlueprintDefinition/Missile200mm"},
+    {"Autocannon Magazine", "MyObjectBuilder_BlueprintDefinition/AutocannonClip"},
+    {"Assault Cannon Shell", "MyObjectBuilder_BlueprintDefinition/MediumCalibreAmmo"},
+    {"Artillery Shell", "MyObjectBuilder_BlueprintDefinition/LargeCalibreAmmo"},
+    {"Large Railgun Sabot", "MyObjectBuilder_BlueprintDefinition/LargeRailgunAmmo"},
+    {"Small Railgun Sabot", "MyObjectBuilder_BlueprintDefinition/SmallRailgunAmmo"},
+    {"S-10 Pistol Magazine", "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolMagazine"},
+    {"MR-30E Pistol Magazine", "MyObjectBuilder_BlueprintDefinition/FullAutoPistolMagazine"},
     // Tools — tiers 1-4
-    {"Welder",                         "MyObjectBuilder_BlueprintDefinition/Welder"},
-    {"Enhanced Welder",                "MyObjectBuilder_BlueprintDefinition/Welder2"},
-    {"Proficient Welder",              "MyObjectBuilder_BlueprintDefinition/Welder3"},
-    {"Elite Welder",                   "MyObjectBuilder_BlueprintDefinition/Welder4"},
-    {"Grinder",                        "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
-    {"Enhanced Grinder",               "MyObjectBuilder_BlueprintDefinition/AngleGrinder2"},
-    {"Proficient Grinder",             "MyObjectBuilder_BlueprintDefinition/AngleGrinder3"},
-    {"Elite Grinder",                  "MyObjectBuilder_BlueprintDefinition/AngleGrinder4"},
-    {"Hand Drill",                     "MyObjectBuilder_BlueprintDefinition/HandDrill"},
-    {"Enhanced Hand Drill",            "MyObjectBuilder_BlueprintDefinition/HandDrill2"},
-    {"Proficient Hand Drill",          "MyObjectBuilder_BlueprintDefinition/HandDrill3"},
-    {"Elite Hand Drill",               "MyObjectBuilder_BlueprintDefinition/HandDrill4"},
+    {"Welder", "MyObjectBuilder_BlueprintDefinition/Welder"},
+    {"Enhanced Welder", "MyObjectBuilder_BlueprintDefinition/Welder2"},
+    {"Proficient Welder", "MyObjectBuilder_BlueprintDefinition/Welder3"},
+    {"Elite Welder", "MyObjectBuilder_BlueprintDefinition/Welder4"},
+    {"Grinder", "MyObjectBuilder_BlueprintDefinition/AngleGrinder"},
+    {"Enhanced Grinder", "MyObjectBuilder_BlueprintDefinition/AngleGrinder2"},
+    {"Proficient Grinder", "MyObjectBuilder_BlueprintDefinition/AngleGrinder3"},
+    {"Elite Grinder", "MyObjectBuilder_BlueprintDefinition/AngleGrinder4"},
+    {"Hand Drill", "MyObjectBuilder_BlueprintDefinition/HandDrill"},
+    {"Enhanced Hand Drill", "MyObjectBuilder_BlueprintDefinition/HandDrill2"},
+    {"Proficient Hand Drill", "MyObjectBuilder_BlueprintDefinition/HandDrill3"},
+    {"Elite Hand Drill", "MyObjectBuilder_BlueprintDefinition/HandDrill4"},
     // Rifles
-    {"Automatic Rifle",                "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
-    {"Precise Automatic Rifle",        "MyObjectBuilder_BlueprintDefinition/PreciseAutomaticRifle"},
-    {"Rapid-Fire Automatic Rifle",     "MyObjectBuilder_BlueprintDefinition/RapidFireAutomaticRifle"},
-    {"Elite Automatic Rifle",          "MyObjectBuilder_BlueprintDefinition/UltimateAutomaticRifle"},
+    {"Automatic Rifle", "MyObjectBuilder_BlueprintDefinition/AutomaticRifle"},
+    {"Precise Automatic Rifle", "MyObjectBuilder_BlueprintDefinition/PreciseAutomaticRifle"},
+    {"Rapid-Fire Automatic Rifle", "MyObjectBuilder_BlueprintDefinition/RapidFireAutomaticRifle"},
+    {"Elite Automatic Rifle", "MyObjectBuilder_BlueprintDefinition/UltimateAutomaticRifle"},
     // Pistols
-    {"Semi-Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolItem"},
-    {"Enhanced Semi-Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedSemiAutoPistolItem"},
-    {"Elite Pistol",                   "MyObjectBuilder_BlueprintDefinition/ElitePistolItem"},
-    {"Full Auto Pistol",               "MyObjectBuilder_BlueprintDefinition/FullAutoPistolItem"},
-    {"Enhanced Full Auto Pistol",      "MyObjectBuilder_BlueprintDefinition/EnhancedFullAutoPistolItem"},
+    {"Semi-Auto Pistol", "MyObjectBuilder_BlueprintDefinition/SemiAutoPistolItem"},
+    {"Enhanced Semi-Auto Pistol", "MyObjectBuilder_BlueprintDefinition/EnhancedSemiAutoPistolItem"},
+    {"Elite Pistol", "MyObjectBuilder_BlueprintDefinition/ElitePistolItem"},
+    {"Full Auto Pistol", "MyObjectBuilder_BlueprintDefinition/FullAutoPistolItem"},
+    {"Enhanced Full Auto Pistol", "MyObjectBuilder_BlueprintDefinition/EnhancedFullAutoPistolItem"},
     // Launchers
-    {"Basic Rocket Launcher",          "MyObjectBuilder_BlueprintDefinition/BasicHandHeldLauncherItem"},
-    {"Rocket Launcher",                "MyObjectBuilder_BlueprintDefinition/AdvancedHandHeldLauncherItem"},
+    {"Basic Rocket Launcher", "MyObjectBuilder_BlueprintDefinition/BasicHandHeldLauncherItem"},
+    {"Rocket Launcher", "MyObjectBuilder_BlueprintDefinition/AdvancedHandHeldLauncherItem"},
 };
 
 List<IMyTerminalBlock> inventoryBlocks = new List<IMyTerminalBlock>();
@@ -435,9 +437,9 @@ List<IMyTextPanel> textPanels = new List<IMyTextPanel>();
 List<IMyLightingBlock> statusLights = new List<IMyLightingBlock>();
 List<IMyTerminalBlock> broadcastBlocks = new List<IMyTerminalBlock>();
 
-// ============================================================
+// ====================
 // CONTRACT DATA STRUCTURE
-// ============================================================
+// ====================
 
 // Represents one named trade contract with its item list and metadata.
 class ContractEntry
@@ -489,6 +491,7 @@ void Main(string argument, UpdateType updateSource)
 
     if (ENABLE_INVENTORY_SORTING && tick % SORT_INTERVAL_TICKS == 2)
     {
+        FillIrrigationBlocks();
         SortInventories();
     }
 
@@ -544,9 +547,9 @@ void Main(string argument, UpdateType updateSource)
     Echo("Last Alert: " + lastAlert);
 }
 
-// ============================================================
+// ====================
 // COMMANDS
-// ============================================================
+// ====================
 
 void HandleCommand(string cmd)
 {
@@ -556,6 +559,7 @@ void HandleCommand(string cmd)
     {
         ScanBlocks();
         ScanInventories();
+        FillIrrigationBlocks();
         SortInventories();
         currentStatus = "Force sort complete";
     }
@@ -687,10 +691,10 @@ void CompleteContract(string name)
     lastAlert = "Contract not found: " + name;
 }
 
-// ============================================================
+// ====================
 // COMBAT MODE
 // Called by Base_Defense via TryRun("combat_mode") / TryRun("clear_combat")
-// ============================================================
+// ====================
 
 void EnterCombatMode()
 {
@@ -774,9 +778,9 @@ void SendToPB(string pbName, string command)
     }
 }
 
-// ============================================================
+// ====================
 // SCANNING
-// ============================================================
+// ====================
 
 void ScanBlocks()
 {
@@ -793,6 +797,12 @@ void ScanBlocks()
     GridTerminalSystem.GetBlocksOfType<IMyTerminalBlock>(inventoryBlocks, b => b.HasInventory && IsUsableBlock(b));
     GridTerminalSystem.GetBlocksOfType<IMyCargoContainer>(cargoContainers, b => IsUsableBlock(b));
     GridTerminalSystem.GetBlocksOfType<IMyAssembler>(assemblers, b => IsUsableBlock(b));
+    // Survival kits share IMyAssembler but cannot accept production queue items.
+    for (int i = assemblers.Count - 1; i >= 0; i--)
+    {
+        if (IsExcludedAssembler(assemblers[i]))
+            assemblers.RemoveAt(i);
+    }
     GridTerminalSystem.GetBlocksOfType<IMyRefinery>(refineries, b => IsUsableBlock(b));
     GridTerminalSystem.GetBlocksOfType<IMyShipConnector>(connectors, b => IsUsableBlock(b));
     GridTerminalSystem.GetBlocksOfType<IMyGasTank>(gasTanks, b => IsUsableBlock(b));
@@ -839,7 +849,10 @@ void ScanInventories()
 bool IsExcludedFromAvailability(IMyTerminalBlock block)
 {
     string n = block.CustomName;
-    return n.Contains(TAG_TRADE_SHIP) || n.Contains(TAG_LOADOUT_SHIP) || n.Contains(TAG_STAGED) || n.Contains(TAG_SALVAGE) || n.Contains(TAG_EXPORT) || n.Contains(TAG_DO_NOT_TRACK);
+    return n.Contains(TAG_TRADE_SHIP)   || n.Contains(TAG_LOADOUT_SHIP) ||
+           n.Contains(TAG_STAGED)       || n.Contains(TAG_SALVAGE)      ||
+           n.Contains(TAG_EXPORT)       || n.Contains(TAG_DO_NOT_TRACK) ||
+           n.Contains(TAG_IRRIGATION);
 }
 
 void AddAmount(Dictionary<string, double> dict, string key, double amount)
@@ -851,17 +864,41 @@ void AddAmount(Dictionary<string, double> dict, string key, double amount)
 string ItemDisplayName(MyInventoryItem item)
 {
     string subtype = item.Type.SubtypeId;
-    string type = item.Type.TypeId;
+    string type    = item.Type.TypeId;
 
-    if (type.EndsWith("/Ore")) return subtype + " Ore";
-    if (type.EndsWith("/Ingot"))
+    // TypeId in the SE PB API is the full type name e.g. "MyObjectBuilder_Ingot".
+    // It does NOT contain a slash, so EndsWith("/Ingot") always fails.
+    // Use Contains on the unqualified type name suffix instead.
+    if (type.Contains("Ore"))
+        return subtype + " Ore";
+
+    if (type.Contains("Ingot"))
     {
-        if (subtype == "Silicon") return "Silicon Wafer";
+        if (subtype == "Silicon")   return "Silicon Wafer";
         if (subtype == "Magnesium") return "Magnesium Powder";
         return subtype + " Ingot";
     }
 
-    // Component subtypes
+    // Food and consumables — TypeId is MyObjectBuilder_ConsumableItem.
+    if (type.Contains("ConsumableItem"))
+    {
+        if (subtype == "Organic")    return "Organic";
+        if (subtype == "SpaceWheat") return "Space Wheat";
+        if (subtype == "Mushroom")   return "Mushroom";
+        if (subtype == "Redbeet")    return "Red Beet";
+        if (subtype == "Carrot")     return "Carrot";
+        if (subtype == "Tomato")     return "Tomato";
+        if (subtype == "CookedMeat") return "Cooked Meat";
+        if (subtype == "RawMeat")    return "Raw Meat";
+        if (subtype == "Egg")        return "Egg";
+        if (subtype == "Bread")      return "Bread";
+        if (subtype == "Flour")      return "Flour";
+        if (subtype == "Wheat")      return "Wheat";
+        // Any other unmapped consumable still goes to food storage.
+        return subtype;
+    }
+
+    // Component subtypes — matched by subtype name, no TypeId ambiguity here.
     if (subtype == "SteelPlate")           return "Steel Plate";
     if (subtype == "InteriorPlate")        return "Interior Plate";
     if (subtype == "Construction")         return "Construction Component";
@@ -879,19 +916,34 @@ string ItemDisplayName(MyInventoryItem item)
     if (subtype == "Girder")               return "Girder";
     if (subtype == "ReactorComponent")     return "Reactor Component";
     if (subtype == "ThrustComponent")      return "Thrust Component";
-    // Gas
+    if (subtype == "Explosives")           return "Explosives";
+    if (subtype == "Detector")             return "Detector Components";
+    if (subtype == "Canvas")               return "Canvas";
+    if (subtype == "GravityGenerator")     return "Gravity Generator Components";
+    if (subtype == "ZoneChip")             return "Zone Chip";
+    if (subtype == "EngineerPlushie")      return "Engineer Plushie";
+    if (subtype == "SabiroidPlushie")      return "Saberoid Plushie";
+    // Gas bottles
     if (subtype == "HydrogenBottle")       return "Hydrogen Bottle";
     if (subtype == "OxygenBottle")         return "Oxygen Bottle";
+    // Seeds — subtype match covers both ConsumableItem and GasContainerObject versions.
+    if (subtype == "WheatSeeds")           return "Wheat Seeds";
+    if (subtype == "MushroomSeeds")        return "Mushroom Seeds";
+    if (subtype == "CarrotSeeds")          return "Carrot Seeds";
+    if (subtype == "TomatoSeeds")          return "Tomato Seeds";
+    if (subtype == "RedbeetSeeds")         return "Redbeet Seeds";
     // Ammo
-    if (subtype == "NATO_5p56x45mm")       return "5.56x45mm NATO magazine";
-    if (subtype == "Missile200mm")         return "Missile 200mm";
-    if (subtype == "AutocannonClip")       return "Autocannon Magazine";
-    if (subtype == "MediumCalibreAmmo")    return "Assault Cannon Shell";
-    if (subtype == "LargeCalibreAmmo")     return "Artillery Shell";
-    if (subtype == "LargeRailgunAmmo")     return "Large Railgun Sabot";
-    if (subtype == "SmallRailgunAmmo")     return "Small Railgun Sabot";
+    if (subtype == "NATO_5p56x45mm")          return "5.56x45mm NATO magazine";
+    if (subtype == "NATO_25x184mm")           return "25x184mm NATO magazine";
+    if (subtype == "Missile200mm")            return "Missile 200mm";
+    if (subtype == "AutocannonClip")          return "Autocannon Magazine";
+    if (subtype == "MediumCalibreAmmo")       return "Assault Cannon Shell";
+    if (subtype == "LargeCalibreAmmo")        return "Artillery Shell";
+    if (subtype == "LargeRailgunAmmo")        return "Large Railgun Sabot";
+    if (subtype == "SmallRailgunAmmo")        return "Small Railgun Sabot";
     if (subtype == "SemiAutoPistolMagazine")  return "S-10 Pistol Magazine";
     if (subtype == "FullAutoPistolMagazine")  return "MR-30E Pistol Magazine";
+    if (subtype == "AutocannonClipSm")        return "Small Autocannon Magazine";
     // Tools
     if (subtype == "Welder")               return "Welder";
     if (subtype == "Welder2")              return "Enhanced Welder";
@@ -922,9 +974,9 @@ string ItemDisplayName(MyInventoryItem item)
     return subtype;
 }
 
-// ============================================================
+// ====================
 // LCD PARSING
-// ============================================================
+// ====================
 
 // Scans all text panels for contract LCDs.
 // Supports two formats:
@@ -1075,9 +1127,71 @@ IMyTextPanel FindTextPanel(string tag)
     return null;
 }
 
-// ============================================================
+// ====================
+// IRRIGATION PRIORITY FILL
+// ====================
+
+// Fills [Irrigation]-tagged blocks with food/seeds before general sorting.
+// Priority: [Food] containers first, then any drainable source.
+// Irrigation blocks are excluded from CanDrainFrom so items stay put.
+void FillIrrigationBlocks()
+{
+    if (DRY_RUN_MODE) return;
+
+    List<IMyTerminalBlock> irrigBlocks = new List<IMyTerminalBlock>();
+    for (int i = 0; i < inventoryBlocks.Count; i++)
+        if (inventoryBlocks[i].CustomName.Contains(TAG_IRRIGATION))
+            irrigBlocks.Add(inventoryBlocks[i]);
+
+    if (irrigBlocks.Count == 0) return;
+
+    // Collect all drainable food-type items across the base into a transfer list.
+    // We pull from [Food] containers first, then any other drainable source.
+    for (int bi = 0; bi < irrigBlocks.Count; bi++)
+    {
+        IMyTerminalBlock irrigBlock = irrigBlocks[bi];
+        IMyInventory dest = irrigBlock.GetInventory(0);
+        if (dest == null) continue;
+
+        double freeVol = (double)(dest.MaxVolume - dest.CurrentVolume);
+        if (freeVol <= 0) continue;
+
+        // Try food-tagged containers first, then general drainable sources.
+        for (int pass = 0; pass < 2 && freeVol > 0; pass++)
+        {
+            for (int si = 0; si < inventoryBlocks.Count && freeVol > 0; si++)
+            {
+                IMyTerminalBlock src = inventoryBlocks[si];
+                if (src == irrigBlock) continue;
+
+                // Pass 0: only pull from [Food] containers.
+                // Pass 1: pull from any drainable source that has food items.
+                bool isFoodContainer = src.CustomName.Contains(TAG_FOOD) ||
+                                       src.CustomName.Contains("[Foods]");
+                if (pass == 0 && !isFoodContainer) continue;
+                if (pass == 1 && isFoodContainer)  continue;
+                if (pass == 1 && !CanDrainFrom(src)) continue;
+
+                for (int invIdx = 0; invIdx < src.InventoryCount && freeVol > 0; invIdx++)
+                {
+                    IMyInventory srcInv = src.GetInventory(invIdx);
+                    List<MyInventoryItem> items = new List<MyInventoryItem>();
+                    srcInv.GetItems(items);
+                    for (int j = items.Count - 1; j >= 0 && freeVol > 0; j--)
+                    {
+                        if (TagForItem(ItemDisplayName(items[j])) != TAG_FOOD) continue;
+                        srcInv.TransferItemTo(dest, j);
+                        freeVol = (double)(dest.MaxVolume - dest.CurrentVolume);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ====================
 // INVENTORY SORTING
-// ============================================================
+// ====================
 
 void SortInventories()
 {
@@ -1113,37 +1227,87 @@ bool CanDrainFrom(IMyTerminalBlock block)
 {
     string n = block.CustomName;
     if (n.Contains(TAG_DO_NOT_TRACK)) return false;
-    if (n.Contains(TAG_RESERVE)) return false;
-    if (n.Contains(TAG_INPUT_ONLY)) return false;
-    if (n.Contains(TAG_TRADE_SHIP)) return false;
+    if (n.Contains(TAG_RESERVE))      return false;
+    if (n.Contains(TAG_INPUT_ONLY))   return false;
+    if (n.Contains(TAG_TRADE_SHIP))   return false;
     if (n.Contains(TAG_LOADOUT_SHIP)) return false;
-    if (n.Contains(TAG_STAGED)) return false;
-    if (n.Contains(TAG_EXPORT)) return false;
-    if (n.Contains(TAG_FOOD)) return false;
+    if (n.Contains(TAG_STAGED))       return false;
+    if (n.Contains(TAG_EXPORT))       return false;
+    // Do not drain food storage or irrigation blocks — food/seeds should only flow in.
+    if (n.Contains(TAG_FOOD) || n.Contains("[Foods]")) return false;
+    if (n.Contains(TAG_IRRIGATION)) return false;
+    // Never drain weapon blocks — turrets, gatling guns, missile launchers, interior
+    // turrets, and hand-held weapons held in suit/character inventory. Draining these
+    // disarms the base defences every sort cycle.
+    // IMyUserControllableGun covers all turret and fixed-weapon block types.
+    if (block is IMyUserControllableGun) return false;
     return true;
 }
 
 IMyCargoContainer FindContainerForItem(string itemName, IMyTerminalBlock source)
 {
     string tag = TagForItem(itemName);
-    IMyCargoContainer target = FindCargoWithTag(tag);
-    if (target != null) return target;
-    target = FindCargoWithTag(TAG_OVERFLOW);
-    if (target != null) return target;
+    if (tag != null)
+    {
+        IMyCargoContainer target = FindCargoWithTag(tag);
+        if (target != null) return target;
+        // The correct tag container exists in the script but no container on the
+        // grid has that tag. Log it so the player can see which tag is missing
+        // rather than silently dumping into overflow.
+        if (ENABLE_DEBUG_LCD)
+            debugMissingTags.Add(tag + " (for " + itemName + ")");
+    }
+    // Fall through to overflow, then quarantine.
+    IMyCargoContainer overflow = FindCargoWithTag(TAG_OVERFLOW);
+    if (overflow != null) return overflow;
     return FindCargoWithTag(TAG_QUARANTINE);
 }
 
 string TagForItem(string itemName)
 {
-    if (itemName.EndsWith(" Ore") || itemName == "Stone") return TAG_ORE;
-    if (itemName.EndsWith(" Ingot") || itemName == "Silicon Wafer" || itemName == "Magnesium Powder") return TAG_INGOT;
-    if (itemName.Contains("Bottle") || itemName == "Ice") return TAG_FUEL;
+    if (itemName.EndsWith(" Ore") || itemName == "Stone")                               return TAG_ORE;
+    if (itemName.EndsWith(" Ingot") || itemName == "Silicon Wafer"
+                                    || itemName == "Magnesium Powder")                  return TAG_INGOT;
+    if (itemName.Contains("Bottle") || itemName == "Ice")                               return TAG_FUEL;
     if (itemName.Contains("magazine") || itemName.Contains("Magazine") ||
-        itemName.Contains("Missile")  || itemName.Contains("Shell") || itemName.Contains("Sabot")) return TAG_AMMO;
-    if (itemName.Contains("Welder") || itemName.Contains("Grinder") || itemName.Contains("Drill")) return TAG_TOOL;
-    if (itemName.Contains("Rifle") || itemName.Contains("Pistol") || itemName.Contains("Launcher")) return TAG_WEAPONS;
-    if (itemName == "Food" || itemName == "Seeds") return TAG_FOOD;
-    return TAG_COMPONENT;
+        itemName.Contains("Missile")  || itemName.Contains("Shell")
+                                      || itemName.Contains("Sabot"))                    return TAG_AMMO;
+    if (itemName.Contains("Welder") || itemName.Contains("Grinder")
+                                    || itemName.Contains("Drill"))                      return TAG_TOOL;
+    if (itemName.Contains("Rifle")  || itemName.Contains("Pistol")
+                                    || itemName.Contains("Launcher"))                   return TAG_WEAPONS;
+
+    // Food — match all vanilla consumable items, seeds, and organic matter by name.
+    // ItemDisplayName maps all ConsumableItem subtypes to their display names above,
+    // so we match on those display names here.
+    if (itemName == "Organic"     || itemName == "Space Wheat"  || itemName == "Wheat"    ||
+        itemName == "Mushroom"    || itemName == "Red Beet"     || itemName == "Carrot"   ||
+        itemName == "Tomato"      || itemName == "Cooked Meat"  || itemName == "Raw Meat" ||
+        itemName == "Egg"         || itemName == "Bread"        || itemName == "Flour"    ||
+        itemName == "Wheat Seeds" || itemName == "Mushroom Seeds" ||
+        itemName == "Carrot Seeds"|| itemName == "Tomato Seeds" || itemName == "Redbeet Seeds" ||
+        itemName == "Seeds"       || itemName == "Food")                                return TAG_FOOD;
+
+    // Known component subtypes — explicit list prevents unrecognised items from
+    // silently landing in [Component] storage. If you add modded components,
+    // add their display names here.
+    if (itemName == "Steel Plate"                  || itemName == "Interior Plate"          ||
+        itemName == "Construction Component"       || itemName == "Metal Grid"              ||
+        itemName == "Large Steel Tube"             || itemName == "Small Steel Tube"        ||
+        itemName == "Motor"                        || itemName == "Computer"                ||
+        itemName == "Display"                      || itemName == "Medical Component"       ||
+        itemName == "Radio-communication Component"                                         ||
+        itemName == "Power Cell"                   || itemName == "Solar Cell"              ||
+        itemName == "Bulletproof Glass"            || itemName == "Girder"                  ||
+        itemName == "Reactor Component"            || itemName == "Thrust Component"        ||
+        itemName == "Explosives"                   || itemName == "Detector Components"     ||
+        itemName == "Canvas"                       || itemName == "Gravity Generator Components" ||
+        itemName == "Zone Chip"                    || itemName == "Engineer Plushie"        ||
+        itemName == "Saberoid Plushie")                                                     return TAG_COMPONENT;
+
+    // Unrecognised item — return null so FindContainerForItem logs it and routes
+    // to [Overflow] rather than silently dumping into [Component].
+    return null;
 }
 
 // Returns the tagged cargo container with the most remaining free space.
@@ -1152,15 +1316,28 @@ string TagForItem(string itemName)
 // container carrying multiple tags (e.g. [Ammo][Tool][Weapons]) is eligible
 // for every item type it declares and will receive whichever type has the
 // most pressure at any given moment.
+// Also accepts common plural variants: [Ingots] matches [Ingot], [Components]
+// matches [Component], so minor naming differences don't silently break routing.
 IMyCargoContainer FindCargoWithTag(string tag)
 {
+    // Build a list of acceptable tag variants for this tag.
+    // Singular [Ingot] also accepts [Ingots], [Component] accepts [Components], etc.
+    string tagAlt = null;
+    if      (tag == TAG_INGOT)     tagAlt = "[Ingots]";
+    else if (tag == TAG_COMPONENT) tagAlt = "[Components]";
+    else if (tag == TAG_ORE)       tagAlt = "[Ores]";
+    else if (tag == TAG_AMMO)      tagAlt = "[Ammos]";
+    else if (tag == TAG_TOOL)      tagAlt = "[Tools]";
+    else if (tag == TAG_FOOD)      tagAlt = "[Foods]";
+
     IMyCargoContainer best = null;
     double bestFree = -1;
     for (int i = 0; i < cargoContainers.Count; i++)
     {
         IMyCargoContainer c = cargoContainers[i];
-        if (!c.CustomName.Contains(tag)) continue;
-        if (c.CustomName.Contains(TAG_OUTPUT_ONLY)) continue;
+        string n = c.CustomName;
+        if (!n.Contains(tag) && (tagAlt == null || !n.Contains(tagAlt))) continue;
+        if (n.Contains(TAG_OUTPUT_ONLY)) continue;
         IMyInventory inv = c.GetInventory(0);
         double free = (double)(inv.MaxVolume - inv.CurrentVolume);
         if (free > bestFree)
@@ -1172,9 +1349,9 @@ IMyCargoContainer FindCargoWithTag(string tag)
     return best;
 }
 
-// ============================================================
+// ====================
 // CONTRACTS / TRADE SHIP
-// ============================================================
+// ====================
 
 void ManageContractsAndTradeShip()
 {
@@ -1409,9 +1586,9 @@ void ClearNamedContractLCD(string contractName)
     }
 }
 
-// ============================================================
+// ====================
 // LOADOUT DOCK
-// ============================================================
+// ====================
 
 void ManageLoadoutDock()
 {
@@ -1454,9 +1631,9 @@ void FillLoadoutGasTanks(IMyShipConnector dock)
     }
 }
 
-// ============================================================
+// ====================
 // SALVAGE DOCK
-// ============================================================
+// ====================
 
 void ManageSalvageDock()
 {
@@ -1511,9 +1688,9 @@ void ManageSalvageDock()
     currentStatus = "Salvage dock active";
 }
 
-// ============================================================
+// ====================
 // REFINERIES
-// ============================================================
+// ====================
 
 void ManageRefineries()
 {
@@ -1701,9 +1878,9 @@ void DecayCooldowns()
     }
 }
 
-// ============================================================
+// ====================
 // ASSEMBLER INPUT DRAINING
-// ============================================================
+// ====================
 
 // Drains the input inventory (slot 0) of each assembler back to appropriate cargo when:
 //   (a) the assembler is idle — clears leftover ingredients from a cancelled or
@@ -1718,13 +1895,15 @@ void DrainAssemblerInputs()
 {
     if (DRY_RUN_MODE)
     {
-        // In dry-run mode, report what would be drained without moving anything.
         for (int i = 0; i < assemblers.Count; i++)
         {
             IMyAssembler a = assemblers[i];
             if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+            if (IsExcludedAssembler(a)) continue;
             IMyInventory input = a.GetInventory(0);
-            bool idle = !a.IsProducing && a.IsQueueEmpty;
+            List<MyProductionItem> queue = new List<MyProductionItem>();
+            a.GetQueue(queue);
+            bool idle = queue.Count == 0;
             double fill = (double)input.CurrentVolume / (double)input.MaxVolume;
             if (idle || fill >= ASSEMBLER_INPUT_DRAIN_THRESHOLD)
                 Echo("[DryRun] Would drain assembler input: " + a.CustomName +
@@ -1737,12 +1916,17 @@ void DrainAssemblerInputs()
     {
         IMyAssembler a = assemblers[i];
         if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+        if (IsExcludedAssembler(a)) continue;
 
         IMyInventory input = a.GetInventory(0);
-        bool idle = !a.IsProducing && a.IsQueueEmpty;
+
+        List<MyProductionItem> queue = new List<MyProductionItem>();
+        a.GetQueue(queue);
+        bool idle = queue.Count == 0;
+
         double fill = (double)input.CurrentVolume / (double)input.MaxVolume;
 
-        if (!idle && fill < ASSEMBLER_INPUT_DRAIN_THRESHOLD) continue;
+            if (!idle && fill < ASSEMBLER_INPUT_DRAIN_THRESHOLD) continue;
 
         List<MyInventoryItem> items = new List<MyInventoryItem>();
         input.GetItems(items);
@@ -1757,9 +1941,9 @@ void DrainAssemblerInputs()
     }
 }
 
-// ============================================================
+// ====================
 // PRODUCTION / DISASSEMBLY
-// ============================================================
+// ====================
 
 void ManageProductionQuotas()
 {
@@ -1815,44 +1999,93 @@ double GetEffectiveDisassemblyMax(string item)
 void QueueProduction(string itemName, double amount)
 {
     if (amount <= 0) return;
-    IMyAssembler assembler = GetBestAssemblerForProduction();
-    if (assembler == null) return;
 
     string blueprint = BlueprintForItem(itemName);
-    if (blueprint == "") return;
-
-    if (!DRY_RUN_MODE)
+    if (blueprint == "")
     {
-        // Check how much of this item is already queued across all assemblers to avoid
-        // stacking duplicate jobs every 5 seconds.
-        double alreadyQueued = 0;
-        MyDefinitionId blueprintId;
-        if (!MyDefinitionId.TryParse(blueprint, out blueprintId)) return;
+        lastAlert = "No blueprint for: " + itemName;
+        return;
+    }
 
-        for (int i = 0; i < assemblers.Count; i++)
+    if (DRY_RUN_MODE) return;
+
+    MyDefinitionId blueprintId;
+    try { blueprintId = MyDefinitionId.Parse(blueprint); }
+    catch { lastAlert = "Blueprint parse failed for: " + itemName; return; }
+
+    string blueprintSubtype = blueprint.Contains("/") ?
+        blueprint.Substring(blueprint.LastIndexOf('/') + 1) : blueprint;
+
+    double alreadyQueued = 0;
+    for (int i = 0; i < assemblers.Count; i++)
+    {
+        IMyAssembler a = assemblers[i];
+        if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+        if (a.CooperativeMode) continue;
+        if (IsExcludedAssembler(a)) continue;
+        List<MyProductionItem> queue = new List<MyProductionItem>();
+        a.GetQueue(queue);
+        for (int q = 0; q < queue.Count; q++)
+            if (string.Equals(queue[q].BlueprintId.SubtypeName, blueprintSubtype,
+                              StringComparison.OrdinalIgnoreCase))
+                alreadyQueued += (double)queue[q].Amount;
+    }
+
+    double stillNeeded = amount - alreadyQueued;
+    if (stillNeeded <= 0) return;
+
+    IMyAssembler assembler = GetBestAssemblerForProduction();
+    if (assembler == null) { lastAlert = "No assembler available for: " + itemName; return; }
+
+    try { assembler.AddQueueItem(blueprintId, (VRage.MyFixedPoint)stillNeeded); }
+    catch { lastAlert = "Could not queue: " + itemName; }
+}
+
+IMyAssembler GetBestAssemblerForProduction(bool disassembly = false)
+{
+    IMyAssembler best = null;
+    int bestQueueDepth = int.MaxValue;
+
+    for (int i = 0; i < assemblers.Count; i++)
+    {
+        IMyAssembler a = assemblers[i];
+        if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
+        if (IsExcludedAssembler(a)) continue;
+
+        if (disassembly)
         {
-            if (assemblers[i].CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
-            List<MyProductionItem> queue = new List<MyProductionItem>();
-            assemblers[i].GetQueue(queue);
-            for (int q = 0; q < queue.Count; q++)
-            {
-                if (queue[q].BlueprintId == blueprintId)
-                    alreadyQueued += (double)queue[q].Amount;
-            }
+            if (a.Mode != MyAssemblerMode.Disassembly) continue;
+        }
+        else
+        {
+            if (a.Mode == MyAssemblerMode.Disassembly) continue;
+            if (a.CooperativeMode) continue;
         }
 
-        double stillNeeded = amount - alreadyQueued;
-        if (stillNeeded <= 0) return;
-
-        try
+        List<MyProductionItem> queue = new List<MyProductionItem>();
+        a.GetQueue(queue);
+        if (queue.Count < bestQueueDepth)
         {
-            assembler.AddQueueItem(blueprintId, (VRage.MyFixedPoint)stillNeeded);
-        }
-        catch
-        {
-            lastAlert = "Could not queue production for " + itemName;
+            bestQueueDepth = queue.Count;
+            best = a;
         }
     }
+    return best;
+}
+
+// Returns true for assembler-interface blocks that are not valid for production
+// queuing (survival kits, food processors, etc.). Only standard assembler subtypes pass.
+bool IsExcludedAssembler(IMyAssembler a)
+{
+    string sub = a.BlockDefinition.SubtypeName;
+    return sub != "LargeAssembler" &&
+           sub != "BasicAssembler" &&
+           sub != "LargeAssemblerIndustrial";
+}
+
+IMyAssembler GetPrimaryAssembler(bool disassembly)
+{
+    return GetBestAssemblerForProduction(disassembly);
 }
 
 void ManageSurplusDisassembly()
@@ -1880,69 +2113,27 @@ void ManageSurplusDisassembly()
         {
             try
             {
+                MyDefinitionId blueprintId = MyDefinitionId.Parse(blueprint);
                 disassembler.Mode = MyAssemblerMode.Disassembly;
-                disassembler.AddQueueItem(MyDefinitionId.Parse(blueprint), (VRage.MyFixedPoint)excess);
+                disassembler.AddQueueItem(blueprintId, (VRage.MyFixedPoint)excess);
             }
             catch
             {
-                lastAlert = "Could not queue disassembly for " + item;
+                lastAlert = "Could not queue disassembly for: " + item;
             }
         }
     }
 }
 
-// Returns the assembler with the shortest current queue for production jobs,
-// distributing work across all available assemblers rather than funnelling
-// everything into the first one found.
-// Pass disassembly=true to find the best disassembler instead.
-IMyAssembler GetBestAssemblerForProduction(bool disassembly = false)
-{
-    IMyAssembler best = null;
-    int bestQueueDepth = int.MaxValue;
-
-    for (int i = 0; i < assemblers.Count; i++)
-    {
-        IMyAssembler a = assemblers[i];
-        if (a.CustomName.Contains(TAG_DO_NOT_TRACK)) continue;
-
-        if (disassembly)
-        {
-            // For disassembly, pick any assembler capable of it.
-            if (a.Mode != MyAssemblerMode.Disassembly) continue;
-        }
-        else
-        {
-            // For production, skip assemblers currently locked in disassembly mode.
-            if (a.Mode == MyAssemblerMode.Disassembly) continue;
-        }
-
-        List<MyProductionItem> queue = new List<MyProductionItem>();
-        a.GetQueue(queue);
-        if (queue.Count < bestQueueDepth)
-        {
-            bestQueueDepth = queue.Count;
-            best = a;
-        }
-    }
-    return best;
-}
-
-// Legacy name kept for disassembly callers.
-IMyAssembler GetPrimaryAssembler(bool disassembly)
-{
-    return GetBestAssemblerForProduction(disassembly);
-}
-
-// Blueprint lookup — dictionary is a class-level field (see BLUEPRINT DICTIONARY section)
-// so it is allocated once at startup rather than on every call.
+// Blueprint lookup
 string BlueprintForItem(string itemName)
 {
     return BLUEPRINTS.ContainsKey(itemName) ? BLUEPRINTS[itemName] : "";
 }
 
-// ============================================================
+// ====================
 // INVENTORY MOVEMENT HELPERS
-// ============================================================
+// ====================
 
 bool MoveItemToBlocks(string itemName, double amount, List<IMyTerminalBlock> targets, bool respectReserve)
 {
@@ -2093,9 +2284,9 @@ double GetTotal(Dictionary<string, double> dict, string key)
     return dict.ContainsKey(key) ? dict[key] : 0;
 }
 
-// ============================================================
+// ====================
 // RESERVE CHECKS / STATUS
-// ============================================================
+// ====================
 
 void CheckReserves()
 {
@@ -2132,9 +2323,9 @@ void CheckReserves()
     }
 }
 
-// ============================================================
+// ====================
 // LCD / LIGHT / BROADCAST OUTPUT
-// ============================================================
+// ====================
 
 void UpdateLCDs()
 {
@@ -2331,6 +2522,37 @@ void WriteDebugLCD()
     sb.AppendLine("Last Command: " + lastCommand);
     sb.AppendLine("Last Alert: " + lastAlert);
     sb.AppendLine();
+
+    // ---- Storage tag validation ----
+    // Check that every required storage tag has at least one cargo container on the grid.
+    // A missing tag means items of that type have nowhere to go and will land in overflow
+    // or quarantine instead.
+    string[] requiredTags = new string[]
+    {
+        TAG_ORE, TAG_INGOT, TAG_COMPONENT, TAG_AMMO, TAG_TOOL,
+        TAG_WEAPONS, TAG_FUEL, TAG_FOOD, TAG_OVERFLOW
+    };
+    bool anyMissingStorage = false;
+    sb.AppendLine("STORAGE TAG CHECK");
+    for (int i = 0; i < requiredTags.Length; i++)
+    {
+        bool found = FindCargoWithTag(requiredTags[i]) != null;
+        if (!found) anyMissingStorage = true;
+        sb.AppendLine("  " + requiredTags[i] + ": " + (found ? "OK" : "*** MISSING ***"));
+    }
+    if (!anyMissingStorage) sb.AppendLine("  All storage tags present.");
+    sb.AppendLine();
+
+    // ---- Items routing to wrong container this cycle ----
+    if (debugMissingTags.Count > 0)
+    {
+        sb.AppendLine("ROUTING WARNINGS (sent to overflow)");
+        foreach (string entry in debugMissingTags)
+            sb.AppendLine("  No container for: " + entry);
+        sb.AppendLine();
+    }
+    debugMissingTags.Clear();
+
     sb.AppendLine("BLOCKS FOUND");
     sb.AppendLine("Inventory Blocks: " + inventoryBlocks.Count);
     sb.AppendLine("Cargo Containers: " + cargoContainers.Count);
@@ -2339,11 +2561,22 @@ void WriteDebugLCD()
     sb.AppendLine("Connectors: " + connectors.Count);
     sb.AppendLine("Status Lights: " + statusLights.Count);
     sb.AppendLine();
+    sb.AppendLine("ASSEMBLER DETAIL");
+    for (int i = 0; i < assemblers.Count; i++)
+    {
+        IMyAssembler a = assemblers[i];
+        sb.AppendLine(a.CustomName);
+        sb.AppendLine("  Sub=" + a.BlockDefinition.SubtypeName +
+                      " Coop=" + a.CooperativeMode +
+                      " Mode=" + a.Mode +
+                      " Excl=" + IsExcludedAssembler(a));
+    }
+    sb.AppendLine();
     sb.AppendLine("DOCK DETECTION");
     sb.AppendLine("Trade Connector: " + ConnectorFoundText(trade));
     sb.AppendLine("Trade Ship Connected: " + ConnectedYesNo(trade));
-    sb.AppendLine("Transport/Loadout Connector: " + ConnectorFoundText(loadout));
-    sb.AppendLine("Transport/Loadout Rover Connected: " + ConnectedYesNo(loadout));
+    sb.AppendLine("Loadout Connector: " + ConnectorFoundText(loadout));
+    sb.AppendLine("Loadout Rover Connected: " + ConnectedYesNo(loadout));
     sb.AppendLine("Salvage Connector: " + ConnectorFoundText(salvage));
     sb.AppendLine("Salvage Rover Connected: " + ConnectedYesNo(salvage));
     sb.AppendLine();
@@ -2453,9 +2686,9 @@ void Broadcast(string message)
     }
 }
 
-// ============================================================
+// ====================
 // TEXT HELPERS
-// ============================================================
+// ====================
 
 string ConnectorFoundText(IMyShipConnector c)
 {
